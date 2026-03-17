@@ -10,7 +10,7 @@
 
 ## 1. Problem Statement
 
-NIST IR 8547 (November 2024) sets hard deadlines: RSA-2048 and ECC P-256 deprecated after 2030, disallowed after 2035. ML-KEM (FIPS 203) and ML-DSA (FIPS 204) are finalized NIST standards, but tooling to audit existing TLS infrastructure for post-quantum readiness is fragmented and incomplete.
+NIST IR 8547 (Initial Public Draft, November 2024) proposes hard deadlines: RSA-2048 and ECC P-256 deprecated after 2030, disallowed after 2035. These deadlines are widely adopted in planning guidance and unlikely to loosen before finalization. ML-KEM (FIPS 203) and ML-DSA (FIPS 204) are finalized NIST standards, but tooling to audit existing TLS infrastructure for post-quantum readiness is fragmented and incomplete.
 
 At least six PQC scanning tools appeared in 2025 alone — none combine live TLS endpoint scanning, compliance scoring, CBOM generation, SARIF output, and agent integration in a single static binary. testssl.sh (8.9k stars) detects PQC groups when present but does not warn when absent, has no scoring, and requires a PQC-capable OpenSSL 3.6+ build. pqcscan (Rust, July 2025) and tlsferret (Rust, June 2025) are both early-stage with no scoring, no CBOM, no SARIF, and no extensible compliance framework.
 
@@ -44,7 +44,7 @@ All features below ship in v1:
 - Downgrade probe (classical-only ClientHello, flags servers that accept it)
 - Kyber draft detection (code point 0x6399, deprecated pre-FIPS implementation)
 - STARTTLS support: SMTP, IMAP, POP3, LDAP
-- Output formats: JSON (default), SARIF 2.1.0, CycloneDX 1.6 CBOM, human (colored terminal)
+- Output formats: JSON (default), SARIF 2.1.0, CycloneDX 1.5 CBOM, human (colored terminal)
 - `--compliance` flag: `nist` (default), `cnsa2`, `fips`
 - `--fail-below <N>` for CI/CD gate (exit code 1)
 - `--baseline` for diff against prior scan (progress tracking)
@@ -173,7 +173,7 @@ CLI args / MCP tool call
 | `tokio-rustls` | 0.26.4 | Async TLS streams |
 | `clap` | 4.6.0 | CLI (requires Rust 1.85) |
 | `x509-parser` | 0.18.1 | Certificate chain parsing |
-| `cyclonedx-bom` | 0.8.0 | CycloneDX 1.6 CBOM output |
+| `cyclonedx-bom` | 0.8.0 | CycloneDX 1.5 CBOM output (highest version supported by crate) |
 | `serde-sarif` | 0.8.0 | SARIF 2.1.0 output |
 | `serde` | 1.0.228 | Serialization |
 | `serde_json` | 1.0.149 | JSON output |
@@ -247,12 +247,18 @@ Full TLS connection via `tokio-rustls` + `aws-lc-rs`. Establishes a real connect
 
 Minimal TLS record layer over raw `tokio::net::TcpStream`. Sends a crafted `ClientHello`, reads response, classifies as: `ServerHello` (accepted), `HandshakeFailure` alert (rejected), timeout, or connection close. Never completes the handshake.
 
-**Active cipher enumeration algorithm:**
-1. Start with all ~400 IANA cipher suite IDs
-2. Send `ClientHello` offering batches of 64 suites
-3. On `ServerHello`: record selected suite, remove from candidate set, repeat
-4. On `HandshakeFailure`: remove entire batch, try next
-5. Continue until candidate set exhausted (~10–20 round trips for a typical server)
+**Active cipher enumeration algorithm — two distinct passes:**
+
+*TLS 1.3 pass* (fast — only 5 IANA-defined suites exist):
+1. Send one `ClientHello` with `supported_versions = [TLS 1.3]` offering all five TLS 1.3 cipher suites
+2. Record which suite the server selects; repeat with selected suite removed until `HandshakeFailure`
+3. Typically complete in 2–5 round trips
+
+*TLS 1.2 pass* (batch — ~400 IANA suite IDs):
+1. Send `ClientHello` with `supported_versions = [TLS 1.2]` offering batches of 64 suite IDs
+2. On `ServerHello`: record selected suite, remove from candidate set, repeat
+3. On `HandshakeFailure`: remove entire batch, try next
+4. Continue until candidate set exhausted (~10–20 round trips for a typical server)
 
 **Additional raw probes:**
 - **Downgrade probe:** `ClientHello` with classical suites only + `max_version = TLS 1.2`. `ServerHello` response → downgrade accepted (critical finding).
@@ -265,22 +271,22 @@ Protocol-specific upgrade before handing TCP stream to probe layers:
 | Scheme | Port | Upgrade sequence |
 |---|---|---|
 | `smtp://` | 587/25 | `EHLO` → `STARTTLS` → await `220 Ready` |
+| `smtps://` | 465 | Implicit TLS — no upgrade, connect directly to TLS layer |
 | `imap://` | 143 | await `* OK` → `a001 STARTTLS` → await `a001 OK` |
+| `imaps://` | 993 | Implicit TLS — no upgrade |
 | `pop3://` | 110 | `STLS` → await `+OK` |
+| `pop3s://` | 995 | Implicit TLS — no upgrade |
 | `ldap://` | 389 | StartTLS extended operation |
+| `ldaps://` | 636 | Implicit TLS — no upgrade |
+
+Providing `smtp://host:465` emits `ProbeError::StarttlsUpgradeFailed` with a clear message directing the user to use `smtps://` instead.
 
 ### 7.4 Concurrency Model
 
 ```rust
-let semaphore = Arc::new(Semaphore::new(config.concurrency));
+// buffer_unordered(N) limits concurrent futures to N — no semaphore needed.
 let results = futures::stream::iter(targets)
-    .map(|target| {
-        let sem = semaphore.clone();
-        async move {
-            let _permit = sem.acquire_owned().await;
-            scan_single(target, &config).await
-        }
-    })
+    .map(|target| scan_single(target, &config))
     .buffer_unordered(config.concurrency)
     .collect::<Vec<_>>()
     .await;
@@ -341,11 +347,11 @@ Five weighted categories:
 |---|---|---|
 | X25519MLKEM768 (0x11EC), no HRR | 50 | Current standard, optimal |
 | X25519MLKEM768 (0x11EC), HRR required | 40 | -10 performance/deployment penalty |
-| SecP256r1MLKEM768 (0x11EB) | 45 | Weaker classical component |
-| SecP384r1MLKEM1024 (0x11ED) | 50 | CNSA 2.0 level |
+| SecP256r1MLKEM768 (0x11EB) | 45 | Weaker classical component (P-256 vs X25519) |
+| SecP384r1MLKEM1024 (0x11ED) | 50 | CNSA 2.0 level; **detection-only via raw probe** — rustls/aws-lc-rs has no SupportedKxGroup implementation for this group and cannot actively negotiate it; score applies when detected in server's ServerHello |
 | Pure ML-KEM-1024 (0x0202) | 50 | CNSA 2.0 level, no classical fallback |
-| Pure ML-KEM-768 (0x0201) | 48 | Forward-looking, no classical fallback |
-| X25519Kyber768Draft00 (0x6399) | 20 | Deprecated pre-FIPS, flagged as finding |
+| Pure ML-KEM-768 (0x0201) | 48 | -2 vs hybrid: no classical security floor during the transition period; penalty removed after CNSA 2.0 exclusive-PQC deadline (2033) at which point it scores 50 |
+| X25519Kyber768Draft00 (0x6399) | 20 | Deprecated pre-FIPS, flagged as PQA003 finding |
 | Classical only (x25519, P-256, etc.) | 0 | No PQC |
 
 **TLS version points:**
@@ -364,7 +370,9 @@ Five weighted categories:
 | AES-128-GCM | 8 |
 | 3DES, RC4, export-grade | 0 |
 
-**Timeline multiplier** (applied to cert chain and cipher suite categories):
+**Timeline multiplier** (applied to cert chain and cipher suite categories only):
+
+The key exchange category is intentionally excluded from the timeline multiplier. Key exchange algorithms are ephemeral — renegotiated per session with no expiry date bound to long-lived material. The multiplier is only meaningful for long-lived assets (certificate keys, static cipher configurations) where a future deadline represents real operational risk. Key exchange scoring is based purely on the algorithm used, not when it will be deprecated.
 
 | Years until disallowance | Multiplier | Zone |
 |---|---|---|
@@ -388,11 +396,13 @@ Example: RSA-2048 leaf in 2026 → deadline 2030 → 4 years → multiplier 0.40
 
 Independent of readiness score. Quantifies retrospective decryption risk.
 
-```
-hndl_risk = f(key_exchange_algorithm, cert_expiry, estimated_q_day)
+The exposure window is `estimated_q_day - today` unconditionally. Certificate expiry does not limit how long an adversary retains already-captured traffic — it only bounds how long new sessions can be established. Cert expiry is tracked separately as an informational field and may reduce the HNDL rating by one level if the cert expires before the Q-day (providing a forced rekeying opportunity).
 
+```
 estimated_q_day      = 2030 (default, overridable via --q-day)
-data_exposure_window = min(cert_expiry_date, estimated_q_day) - today
+data_exposure_window = estimated_q_day - today
+
+cert_before_q_day    = cert_expiry_date < estimated_q_day  // forced rekey opportunity
 ```
 
 | Condition | Rating |
@@ -401,6 +411,7 @@ data_exposure_window = min(cert_expiry_date, estimated_q_day) - today
 | Hybrid PQC + exposure window < 2 years | LOW |
 | Hybrid PQC + exposure window 2–5 years | MEDIUM |
 | Classical key exchange + exposure window < 2 years | MEDIUM |
+| Classical key exchange + cert expires before Q-day + exposure window 2–5 years | MEDIUM |
 | Classical key exchange + exposure window 2–5 years | HIGH |
 | Classical key exchange + exposure window > 5 years | CRITICAL |
 
@@ -412,13 +423,17 @@ Tables live in `audit/tables/` as pure data — no scoring logic.
 
 ### NIST IR 8547 Deadlines (key entries)
 
+> **Note:** NIST IR 8547 is an Initial Public Draft (November 2024) as of this writing. Deadline values below are from the IPD and may be refined before finalization. The `audit/tables/nist_ir8547.rs` implementation must include a comment flagging IPD status so deadline values are understood as subject to revision.
+
+
+
 | Algorithm | Deprecated | Disallowed | Note |
 |---|---|---|---|
 | RSA < 2048-bit | Now | Now | Already disallowed |
 | RSA-2048 | 2024 | 2030 | Primary hard wall |
 | RSA-3072 | 2024 | 2030 | |
 | RSA-4096 | 2024 | 2035 | Extended deadline |
-| P-256 / secp256k1 | 2024 | 2030 | |
+| P-256 (secp256r1) | 2024 | 2030 | |
 | P-384 | 2024 | 2030 | |
 | P-521 | 2024 | 2035 | Extended deadline |
 | X25519 / Ed25519 | 2024 | 2030 | |
@@ -493,14 +508,35 @@ Native schema, schema-versioned (`"schema_version": "1.0"`). Full fidelity. Sour
 ### SARIF 2.1.0
 Via `serde-sarif` 0.8.0. Findings map to `results` with stable rule IDs (PQA001–PQA009). Each result includes `helpUri` and `fixes` with remediation config snippet. Consumed by GitHub Advanced Security code scanning.
 
-### CycloneDX 1.6 CBOM
-Via `cyclonedx-bom` 0.8.0. One `cryptographic-asset` component per unique algorithm+keysize observed across all scanned targets. Aggregates occurrences (host:port + chain position) per component. Intended as supply chain compliance deliverable.
+### CycloneDX 1.5 CBOM
+Via `cyclonedx-bom` 0.8.0 (supports CycloneDX 1.5 — the highest version available in this crate; cryptographic asset components were introduced in CycloneDX 1.4 so 1.5 is fully functional for CBOM use). One `cryptographic-asset` component per unique algorithm+keysize observed across all scanned targets. Aggregates occurrences (host:port + chain position) per component. Intended as supply chain compliance deliverable.
 
 ### Human
 Colored terminal output via `owo-colors`. Progress bars via `indicatif`. Streaming output per target (results print as they complete). `--compare` mode: waits for all targets, renders side-by-side comparison table.
 
 ### Baseline Diff (`--baseline prev.json`)
 Loads prior JSON scan, diffs against current, appends `baseline_diff` block to JSON output. Human mode renders change summary showing score deltas and resolved/new findings.
+
+On `schema_version` mismatch between the baseline file and the current binary: emit a warning to stderr, skip the diff, and continue with the full current scan output. Do not silently produce an incorrect diff.
+
+### `--compare` Output Schema
+
+`--compare` is available in all output formats, not human-only. When combined with `--output json`, the output contains a top-level `comparison` field alongside the standard `targets` array:
+
+```rust
+pub struct ComparisonReport {
+    pub targets: Vec<String>,                  // host:port labels in order
+    pub categories: Vec<ComparisonCategory>,   // one per scoring category
+}
+
+pub struct ComparisonCategory {
+    pub name: String,
+    pub scores: Vec<u8>,       // one per target, aligned with targets[]
+    pub winner: Option<usize>, // index of highest-scoring target
+}
+```
+
+When combined with `--output sarif`, `--compare` has no effect (SARIF findings are per-target, not comparative).
 
 ---
 
@@ -516,10 +552,12 @@ Single binary, started in MCP server mode over stdio using `rmcp` 1.2.0 (officia
 |---|---|---|
 | `scan_endpoint` | host, port, full_scan, compliance, protocol | `TargetReport` as JSON |
 | `compare_endpoints` | hosts[], full_scan, compliance | `ComparisonTable` as JSON |
-| `get_cbom` | hosts[], compliance | CycloneDX 1.6 CBOM JSON |
+| `get_cbom` | hosts[], compliance | CycloneDX 1.5 CBOM JSON |
 
 **Resource:**
-- `pqaudit://findings/{host}` — cached findings for a previously scanned host (within session)
+- `pqaudit://findings/{host}` — cached findings for a previously scanned host within the current process lifetime
+
+**Session cache policy:** Cache is process-lifetime, keyed by `(host, port, compliance_mode)`. A second `scan_endpoint` call with the same key overwrites the prior result. Cache is unbounded in size (reasonable for a CLI tool scanning tens to hundreds of hosts per session). Cache is not persisted across process restarts.
 
 MCP is a Cargo feature (`--features mcp`), included in default binary. Users wanting a minimal binary can build without it.
 
@@ -538,11 +576,15 @@ pub enum ProbeError {
     ConnectionRefused { host: String, port: u16 },
     DnsResolutionFailed { host: String },
     TlsHandshakeFailed { reason: String },
+    CertificateValidationFailed { reason: String },  // cert chain invalid, expired, or untrusted
+    SniMismatch { presented: String, expected: String }, // server cert CN/SAN doesn't match SNI
     Timeout { after_ms: u64 },
     StarttlsUpgradeFailed { protocol: StarttlsProtocol, reason: String },
     CertificateParseError { reason: String },
 }
 ```
+
+`SniMismatch` is surfaced as both a `ProbeError` (scan cannot complete) and a finding in its own right — an SNI mismatch is an auditable configuration defect. Operators can retry with `--sni <host>` to override.
 
 ---
 
