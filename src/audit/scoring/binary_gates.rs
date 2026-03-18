@@ -6,7 +6,7 @@ use crate::{DowngradeResult, ProbeResults, TlsVersion};
 pub struct FipsBinaryGatesModel;
 
 fn fips_key_exchange_points(code_point: u16) -> u8 {
-    // All PQC hybrid and pure groups are FIPS-acceptable in binary-gates mode
+    // FIPS-approved PQC groups only; 0x6399 (Kyber draft) intentionally excluded
     match code_point {
         0x11EC | 0x11EB | 0x11ED | 0x0201 | 0x0202 => 50,
         _ => 0,

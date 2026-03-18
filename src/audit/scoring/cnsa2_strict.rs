@@ -7,10 +7,10 @@ pub struct Cnsa2StrictModel;
 
 fn cnsa2_key_exchange_points(code_point: u16) -> u8 {
     match code_point {
-        0x0202 => 50, // Pure ML-KEM-1024
-        0x0201 | 0x11ED => 35, // ML-KEM-768 or SecP384r1MLKEM1024
-        0x11EC => 30, // X25519MLKEM768
-        0x11EB => 25, // SecP256r1MLKEM768
+        0x0202 | 0x11ED => 50, // Pure ML-KEM-1024 or SecP384r1MLKEM1024 (CNSA 2.0 compliant)
+        0x0201 => 35,           // ML-KEM-768 (below CNSA 2.0 recommended level)
+        0x11EC => 30,           // X25519MLKEM768
+        0x11EB => 25,           // SecP256r1MLKEM768
         _ => 0,
     }
 }
@@ -147,6 +147,15 @@ mod tests {
         let probe = pqc_probe_result(0x0201, false); // pure ML-KEM-768
         let result = model.score(&probe, &table);
         assert_eq!(result.key_exchange.points, 35);
+    }
+
+    #[test]
+    fn secp384r1mlkem1024_scores_50_in_cnsa2() {
+        let model = Cnsa2StrictModel;
+        let table = Cnsa2Table;
+        let probe = pqc_probe_result(0x11ED, false); // SecP384r1MLKEM1024 — CNSA 2.0 compliant hybrid
+        let result = model.score(&probe, &table);
+        assert_eq!(result.key_exchange.points, 50);
     }
 
     #[test]

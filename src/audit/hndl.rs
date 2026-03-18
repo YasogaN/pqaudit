@@ -43,7 +43,8 @@ impl HndlModel for DefaultHndlModel {
             .map_or(false, |y| y < config.q_day_year);
 
         let is_pure_pqc  = matches!(group_code, 0x0200 | 0x0201 | 0x0202);
-        let is_hybrid_pqc = matches!(group_code, 0x11EB | 0x11EC | 0x11ED | 0x6399);
+        // 0x6399 (Kyber Draft) is excluded — pre-FIPS draft is not considered sufficient HNDL protection
+        let is_hybrid_pqc = matches!(group_code, 0x11EB | 0x11EC | 0x11ED);
 
         let rating = if is_pure_pqc {
             HndlRating::None
@@ -122,6 +123,12 @@ mod tests {
     fn hybrid_short_exposure_is_low() {
         let assessment = assess_hndl(0x11EC, 2029, 2030, None);
         assert_eq!(assessment.rating, HndlRating::Low);
+    }
+
+    #[test]
+    fn hybrid_long_exposure_is_medium() {
+        let assessment = assess_hndl(0x11EC, 2026, 2030, None); // 4-year exposure
+        assert_eq!(assessment.rating, HndlRating::Medium);
     }
 
     #[test]
