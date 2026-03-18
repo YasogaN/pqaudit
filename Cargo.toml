@@ -1,0 +1,43 @@
+[package]
+name = "pqaudit"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "Apache-2.0"
+description = "TLS post-quantum readiness auditor"
+
+[[bin]]
+name = "pqaudit"
+path = "src/main.rs"
+
+[lib]
+name = "pqaudit"
+path = "src/lib.rs"
+
+[features]
+default = ["mcp"]
+mcp = ["dep:rmcp"]
+live-tests = []
+
+[dependencies]
+rustls = { version = "0.23.37", features = ["aws_lc_rs", "post-quantum"], default-features = false }
+aws-lc-rs = { version = "1.16.1", features = ["bindgen"] }
+tokio = { version = "1.50.0", features = ["full"] }
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["aws-lc-rs"] }
+clap = { version = "4.6.0", features = ["derive"] }
+x509-parser = "0.18.1"
+cyclonedx-bom = "0.8.0"
+serde-sarif = "0.8.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+owo-colors = "4.3.0"
+indicatif = "0.18.4"
+futures = "0.3"
+webpki-roots = "0.26"
+rmcp = { version = "1.2.0", optional = true }
+thiserror = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+proptest = "1.4"
+tokio = { version = "1.50.0", features = ["full", "test-util"] }
