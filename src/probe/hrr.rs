@@ -7,18 +7,6 @@ const HRR_RANDOM: [u8; 32] = [
     0x07, 0x9E, 0x09, 0xE2, 0xC8, 0xA8, 0x33, 0x9C,
 ];
 
-/// State for tracking HelloRetryRequest during a TLS handshake.
-pub struct HrrDetector {
-    pub hrr_observed: bool,
-    pub requested_group: Option<u16>,
-}
-
-impl HrrDetector {
-    pub fn new() -> Self {
-        Self { hrr_observed: false, requested_group: None }
-    }
-}
-
 /// Checks whether a ServerHello's random bytes indicate a HelloRetryRequest.
 /// Returns `true` if this is an HRR, `false` otherwise.
 pub fn is_hrr(server_random: &[u8]) -> bool {

@@ -7,13 +7,12 @@ use crate::audit::tables::iana_groups::named_group_for_code_point;
 use crate::probe::handshake::{build_client_hello, parse_server_response, ServerResponse};
 use crate::probe::hrr::is_hrr;
 
-/// Configuration shared across all probe operations.
+/// Configuration for a single probe operation (timeout + SNI override).
+/// Scanner-level settings (concurrency, full_scan) live in the scanner config.
 #[derive(Debug, Clone)]
 pub struct ScanConfig {
     pub timeout_ms: u64,
     pub sni_override: Option<String>,
-    pub full_scan: bool,
-    pub concurrency: usize,
 }
 
 impl Default for ScanConfig {
@@ -21,8 +20,6 @@ impl Default for ScanConfig {
         Self {
             timeout_ms: 5000,
             sni_override: None,
-            full_scan: false,
-            concurrency: 10,
         }
     }
 }
@@ -107,7 +104,9 @@ async fn probe_raw_group(
             } else {
                 false
             };
-            let group_code = selected_group.unwrap_or(0x001D);
+            let group_code = selected_group.ok_or_else(|| ProbeError::TlsHandshakeFailed {
+                reason: "ServerHello missing key_share extension".into(),
+            })?;
             Ok((group_code, hrr))
         }
         ServerResponse::HandshakeFailure => Err(ProbeError::TlsHandshakeFailed {
