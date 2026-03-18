@@ -1,5 +1,5 @@
-pub mod binary_gates;  // stub for Task 5
-pub mod cnsa2_strict;  // stub for Task 5
+pub mod binary_gates;
+pub mod cnsa2_strict;
 pub mod model;
 pub mod weighted;
 

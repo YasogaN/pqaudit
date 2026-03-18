@@ -57,7 +57,7 @@ fn downgrade_points(downgrade: &DowngradeResult) -> u8 {
 }
 
 impl ScoringModel for NistWeightedModel {
-    fn name(&self) -> &'static str { "NIST Weighted" }
+    fn name(&self) -> &'static str { "nist-weighted" }
 
     fn description(&self) -> &'static str {
         "NIST IR 8547-aligned weighted scoring model for PQC readiness (0-100)"
