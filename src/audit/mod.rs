@@ -4,3 +4,4 @@ pub mod scoring;
 pub mod hndl;
 pub mod compliance;
 pub mod cert_chain;
+pub mod remediation;
