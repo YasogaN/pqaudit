@@ -35,13 +35,15 @@ mod tests {
 
     #[test]
     fn cnsa2_mode_returns_cnsa2_model() {
-        let (_, model) = compliance_pair(ComplianceMode::Cnsa2);
+        let (table, model) = compliance_pair(ComplianceMode::Cnsa2);
+        assert_eq!(table.name(), "NSA CNSA 2.0");
         assert_eq!(model.name(), "cnsa2-strict");
     }
 
     #[test]
     fn fips_mode_returns_binary_gates_model() {
-        let (_, model) = compliance_pair(ComplianceMode::Fips);
+        let (table, model) = compliance_pair(ComplianceMode::Fips);
+        assert_eq!(table.name(), "FIPS 140-3");
         assert_eq!(model.name(), "fips-binary-gates");
     }
 }
