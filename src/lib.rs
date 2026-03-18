@@ -111,7 +111,7 @@ pub struct CipherInventory {
 }
 
 /// Result of the downgrade probe.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DowngradeResult {
     Accepted { negotiated_version: TlsVersion },
     Rejected,
