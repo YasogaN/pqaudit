@@ -108,6 +108,9 @@ pub struct PqcHandshakeResult {
 pub struct CipherInventory {
     pub tls13_suites: Vec<CipherSuite>,
     pub tls12_suites: Vec<CipherSuite>,
+    /// True if server accepted the Kyber draft key share (group 0x6399).
+    #[serde(default)]
+    pub kyber_draft_accepted: bool,
 }
 
 /// Result of the downgrade probe.

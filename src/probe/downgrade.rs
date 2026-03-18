@@ -27,9 +27,10 @@ pub fn classify_downgrade(response: &ServerResponse) -> DowngradeResult {
         ServerResponse::ServerHello { tls_version, .. } => DowngradeResult::Accepted {
             negotiated_version: tls_version_from_u16(*tls_version),
         },
-        ServerResponse::HandshakeFailure
-        | ServerResponse::ConnectionClose
-        | ServerResponse::Timeout => DowngradeResult::Rejected,
+        ServerResponse::Timeout => DowngradeResult::Timeout,
+        ServerResponse::HandshakeFailure | ServerResponse::ConnectionClose => {
+            DowngradeResult::Rejected
+        }
     }
 }
 
@@ -57,11 +58,12 @@ pub async fn probe_downgrade(host: &str, port: u16, timeout_ms: u64) -> Downgrad
         }
         let remaining = match deadline.checked_duration_since(tokio::time::Instant::now()) {
             Some(d) => d,
-            None => return DowngradeResult::Rejected,
+            None => return DowngradeResult::Timeout,
         };
         let mut chunk = [0u8; 4096];
         match tokio::time::timeout(remaining, stream.read(&mut chunk)).await {
-            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
+            Ok(Ok(0)) | Ok(Err(_)) => return DowngradeResult::Rejected,
+            Err(_) => return DowngradeResult::Timeout,
             Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
         }
     }
@@ -92,6 +94,11 @@ mod tests {
     #[test]
     fn connection_close_is_downgrade_rejected() {
         assert_eq!(classify_downgrade(&ServerResponse::ConnectionClose), DowngradeResult::Rejected);
+    }
+
+    #[test]
+    fn timeout_is_downgrade_timeout() {
+        assert_eq!(classify_downgrade(&ServerResponse::Timeout), DowngradeResult::Timeout);
     }
 
     #[test]
