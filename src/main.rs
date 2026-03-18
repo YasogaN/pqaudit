@@ -1,4 +1,7 @@
+use clap::Parser;
+use pqaudit::cli::Cli;
+
 fn main() {
-    // wired up in Task 18
+    let _args = Cli::parse();
     println!("pqaudit v{}", env!("CARGO_PKG_VERSION"));
 }
