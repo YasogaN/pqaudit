@@ -74,7 +74,7 @@ pub fn remediation_for(kind: &FindingKind) -> Remediation {
 
         FindingKind::TlsVersionInsufficient { max_version } => Remediation {
             text: format!(
-                "The server's maximum TLS version is {:?}, which is insufficient for \
+                "The server's maximum TLS version is {}, which is insufficient for \
                  PQC key exchange. TLS 1.3 is required for ML-KEM hybrid groups.",
                 max_version
             ),
