@@ -52,13 +52,14 @@ fn parse_key_info(spki: &SubjectPublicKeyInfo) -> KeyInfo {
     }
 }
 
-fn parse_algorithm_id(spki: &SubjectPublicKeyInfo) -> AlgorithmId {
+/// Returns `None` for unrecognized OIDs so callers never fabricate findings for unknown algorithms.
+fn parse_algorithm_id(spki: &SubjectPublicKeyInfo) -> Option<AlgorithmId> {
     let oid = spki.algorithm.algorithm.to_id_string();
     match oid.as_str() {
         "1.2.840.113549.1.1.1" => {
             let byte_len = spki.subject_public_key.data.len();
             let min_bits: u32 = if byte_len > 500 { 4096 } else if byte_len > 380 { 3072 } else { 2048 };
-            AlgorithmId::Rsa { min_bits }
+            Some(AlgorithmId::Rsa { min_bits })
         }
         "1.2.840.10045.2.1" => {
             let curve = spki.algorithm.parameters
@@ -67,15 +68,15 @@ fn parse_algorithm_id(spki: &SubjectPublicKeyInfo) -> AlgorithmId {
                 .map(|o| o.to_id_string())
                 .unwrap_or_default();
             match curve.as_str() {
-                "1.2.840.10045.3.1.7" => AlgorithmId::EcP256,
-                "1.3.132.0.34"        => AlgorithmId::EcP384,
-                "1.3.132.0.35"        => AlgorithmId::EcP521,
-                _                     => AlgorithmId::EcP256,
+                "1.2.840.10045.3.1.7" => Some(AlgorithmId::EcP256),
+                "1.3.132.0.34"        => Some(AlgorithmId::EcP384),
+                "1.3.132.0.35"        => Some(AlgorithmId::EcP521),
+                _                     => None, // unrecognized curve — no finding
             }
         }
-        "1.3.101.112" => AlgorithmId::Ed25519,
-        "1.3.101.113" => AlgorithmId::Ed448,
-        _             => AlgorithmId::Ed25519, // fallback
+        "1.3.101.112" => Some(AlgorithmId::Ed25519),
+        "1.3.101.113" => Some(AlgorithmId::Ed448),
+        _             => None, // unrecognized algorithm — no finding
     }
 }
 
@@ -108,8 +109,14 @@ pub fn audit_chain(chain_der: &[Vec<u8>]) -> CertChainReport {
 
         let spki = cert.public_key();
         let key = parse_key_info(spki);
-        let alg_id = parse_algorithm_id(spki);
-        let expiry_year = cert.validity().not_after.to_datetime().year() as u32;
+        let alg_id_opt = parse_algorithm_id(spki);
+        let not_after = cert.validity().not_after.to_datetime();
+        let expiry_year = not_after.year().max(0) as u32;
+        let expiry_date = chrono::NaiveDate::from_ymd_opt(
+            not_after.year(),
+            not_after.month() as u32,
+            not_after.day() as u32,
+        ).unwrap_or_default();
         let subject = cert.subject().to_string();
 
         let is_classical = matches!(key,
@@ -117,27 +124,28 @@ pub fn audit_chain(chain_der: &[Vec<u8>]) -> CertChainReport {
         );
 
         if is_classical {
-            if let Some(deadline_info) = table.deadline_for(&alg_id) {
-                let deadline = deadline_info.disallowed_year;
-                findings.push(Finding {
-                    kind: FindingKind::ClassicalCertificate {
-                        position: position.clone(),
-                        key: key.clone(),
-                        deadline,
-                    },
-                    severity: if deadline <= 2030 { Severity::Warning } else { Severity::Note },
-                });
-
-                if expiry_year > deadline {
+            if let Some(ref alg_id) = alg_id_opt {
+                if let Some(deadline_info) = table.deadline_for(alg_id) {
+                    let deadline = deadline_info.disallowed_year;
                     findings.push(Finding {
-                        kind: FindingKind::CertExpiresAfterDeadline {
-                            expiry: chrono::NaiveDate::from_ymd_opt(expiry_year as i32, 1, 1)
-                                .unwrap_or_default(),
+                        kind: FindingKind::ClassicalCertificate {
+                            position: position.clone(),
+                            key: key.clone(),
                             deadline,
-                            algorithm: alg_id.clone(),
                         },
-                        severity: Severity::Warning,
+                        severity: if deadline <= 2030 { Severity::Warning } else { Severity::Note },
                     });
+
+                    if expiry_year > deadline {
+                        findings.push(Finding {
+                            kind: FindingKind::CertExpiresAfterDeadline {
+                                expiry: expiry_date,
+                                deadline,
+                                algorithm: alg_id.clone(),
+                            },
+                            severity: Severity::Warning,
+                        });
+                    }
                 }
             }
         }
@@ -147,7 +155,7 @@ pub fn audit_chain(chain_der: &[Vec<u8>]) -> CertChainReport {
             key,
             expiry_year,
             subject,
-            algorithm: alg_id,
+            algorithm: alg_id_opt.unwrap_or(AlgorithmId::Ed25519), // Unknown → Ed25519 as neutral fallback for display
         });
     }
 
