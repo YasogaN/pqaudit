@@ -23,3 +23,69 @@ pub struct Finding {
     pub kind: FindingKind,
     pub severity: Severity,
 }
+
+impl Finding {
+    pub fn sarif_rule_id(&self) -> &'static str {
+        match &self.kind {
+            FindingKind::ClassicalKeyExchangeOnly { .. }       => "PQA001",
+            FindingKind::HybridKeyExchangeHrrRequired { .. }   => "PQA002",
+            FindingKind::DeprecatedPqcDraftCodepoint { .. }    => "PQA003",
+            FindingKind::WeakSymmetricCipher { .. }            => "PQA004",
+            FindingKind::ClassicalCertificate { deadline, .. } => {
+                if *deadline <= 2030 { "PQA005" } else { "PQA006" }
+            }
+            FindingKind::DowngradeAccepted                     => "PQA007",
+            FindingKind::TlsVersionInsufficient { .. }         => "PQA008",
+            FindingKind::CertExpiresAfterDeadline { .. }       => "PQA009",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ChainPosition, CipherSuite, KeyInfo, NamedGroup};
+
+    #[test]
+    fn finding_has_stable_sarif_id() {
+        let f = Finding {
+            kind: FindingKind::ClassicalKeyExchangeOnly {
+                group: NamedGroup { code_point: 0x001D, name: "x25519".into(), is_pqc: false },
+            },
+            severity: Severity::Error,
+        };
+        assert_eq!(f.sarif_rule_id(), "PQA001");
+    }
+
+    #[test]
+    fn downgrade_accepted_is_pqa007() {
+        let f = Finding { kind: FindingKind::DowngradeAccepted, severity: Severity::Error };
+        assert_eq!(f.sarif_rule_id(), "PQA007");
+    }
+
+    #[test]
+    fn classical_cert_deadline_pre_2030_is_pqa005() {
+        let f = Finding {
+            kind: FindingKind::ClassicalCertificate {
+                position: ChainPosition::Leaf,
+                key: KeyInfo::Rsa { bits: 2048 },
+                deadline: 2030,
+            },
+            severity: Severity::Warning,
+        };
+        assert_eq!(f.sarif_rule_id(), "PQA005");
+    }
+
+    #[test]
+    fn classical_cert_deadline_post_2030_is_pqa006() {
+        let f = Finding {
+            kind: FindingKind::ClassicalCertificate {
+                position: ChainPosition::Leaf,
+                key: KeyInfo::Rsa { bits: 2048 },
+                deadline: 2035,
+            },
+            severity: Severity::Note,
+        };
+        assert_eq!(f.sarif_rule_id(), "PQA006");
+    }
+}
