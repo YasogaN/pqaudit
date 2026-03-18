@@ -20,8 +20,23 @@ pub fn parse_server_response(bytes: &[u8]) -> Result<ServerResponse, String> {
         return Err("too short".into());
     }
     match bytes[0] {
-        0x15 => Ok(ServerResponse::HandshakeFailure), // Alert record
-        0x16 => parse_server_hello(bytes),            // Handshake record
+        0x15 => {
+            // Alert record: level(1) + description(1)
+            // Only fatal handshake_failure (level=2, desc=0x28) is HandshakeFailure.
+            // Other alerts (e.g. close_notify level=1) map to ConnectionClose.
+            if bytes.len() >= 7 {
+                let level = bytes[5];
+                let desc = bytes[6];
+                if level == 0x02 && desc == 0x28 {
+                    Ok(ServerResponse::HandshakeFailure)
+                } else {
+                    Ok(ServerResponse::ConnectionClose)
+                }
+            } else {
+                Ok(ServerResponse::HandshakeFailure) // short alert, assume fatal
+            }
+        }
+        0x16 => parse_server_hello(bytes), // Handshake record
         b => Err(format!("unexpected record type: 0x{:02x}", b)),
     }
 }
@@ -220,22 +235,39 @@ pub fn build_client_hello(
 }
 
 /// Send ClientHello over an existing TcpStream, read response, classify it.
+/// Accumulates bytes until a complete TLS record is received (handles TCP fragmentation).
 pub async fn probe_once(
     stream: &mut TcpStream,
     hello: &[u8],
     timeout_ms: u64,
 ) -> ServerResponse {
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{timeout, Duration, Instant};
     if stream.write_all(hello).await.is_err() {
         return ServerResponse::ConnectionClose;
     }
-    let mut buf = vec![0u8; 8192];
-    match timeout(Duration::from_millis(timeout_ms), stream.read(&mut buf)).await {
-        Ok(Ok(0)) => ServerResponse::ConnectionClose,
-        Ok(Ok(n)) => {
-            parse_server_response(&buf[..n]).unwrap_or(ServerResponse::ConnectionClose)
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let mut buf = Vec::with_capacity(8192);
+    loop {
+        // Determine how many bytes we need
+        let need = if buf.len() >= 5 {
+            5 + u16::from_be_bytes([buf[3], buf[4]]) as usize
+        } else {
+            5 // need at least the record header
+        };
+        if buf.len() >= need {
+            break;
         }
-        Ok(Err(_)) => ServerResponse::ConnectionClose,
-        Err(_) => ServerResponse::Timeout,
+        let remaining = match deadline.checked_duration_since(Instant::now()) {
+            Some(d) => d,
+            None => return ServerResponse::Timeout,
+        };
+        let mut chunk = [0u8; 4096];
+        match tokio::time::timeout(remaining, stream.read(&mut chunk)).await {
+            Ok(Ok(0)) => return ServerResponse::ConnectionClose,
+            Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
+            Ok(Err(_)) => return ServerResponse::ConnectionClose,
+            Err(_) => return ServerResponse::Timeout,
+        }
     }
+    parse_server_response(&buf).unwrap_or(ServerResponse::ConnectionClose)
 }
