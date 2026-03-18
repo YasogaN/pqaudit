@@ -1,3 +1,4 @@
+use chrono::Datelike;
 use crate::audit::findings::{FindingKind, Severity};
 use crate::audit::scoring::model::{CategoryScore, ScoringModel, ScoringResult};
 use crate::audit::tables::DeadlineTable;
@@ -63,7 +64,8 @@ impl ScoringModel for NistWeightedModel {
     }
 
     fn score(&self, probe: &ProbeResults, _table: &dyn DeadlineTable) -> ScoringResult {
-        const CURRENT_YEAR: u32 = 2026;
+        // TODO Task 7: _table will be used for cert chain scoring and cipher suite timeline multiplier
+        let current_year = chrono::Utc::now().year() as u32;
 
         let (ke_points, tls_points, cs_points, downgrade_pts) =
             match &probe.pqc_handshake {
@@ -71,7 +73,7 @@ impl ScoringModel for NistWeightedModel {
                     let ke = key_exchange_points(
                         hs.negotiated_group.code_point,
                         hs.hrr_required,
-                        CURRENT_YEAR,
+                        current_year,
                     );
                     let tls = tls_version_points(&hs.negotiated_version);
                     let cs = cipher_suite_points(hs.negotiated_suite.id);
@@ -128,7 +130,7 @@ impl ScoringModel for NistWeightedModel {
         match finding {
             FindingKind::ClassicalKeyExchangeOnly { .. } => Severity::Error,
             FindingKind::HybridKeyExchangeHrrRequired { .. } => Severity::Warning,
-            FindingKind::DeprecatedPqcDraftCodepoint { .. } => Severity::Warning,
+            FindingKind::DeprecatedPqcDraftCodepoint { .. } => Severity::Error,
             FindingKind::WeakSymmetricCipher { .. } => Severity::Warning,
             FindingKind::ClassicalCertificate { .. } => Severity::Warning,
             FindingKind::DowngradeAccepted => Severity::Error,
@@ -189,6 +191,16 @@ mod tests {
         let probe = pqc_probe_result(0x001D, false);
         let result = model.score(&probe, &table);
         assert_eq!(result.key_exchange.points, 0);
+    }
+
+    #[test]
+    fn timeline_multiplier_boundary_values() {
+        assert_eq!(timeline_multiplier(-1), 0.00);
+        assert_eq!(timeline_multiplier(0),  0.00);
+        assert_eq!(timeline_multiplier(1),  0.10);
+        assert_eq!(timeline_multiplier(2),  0.40);
+        assert_eq!(timeline_multiplier(5),  0.75);
+        assert_eq!(timeline_multiplier(9),  1.00);
     }
 
     #[test]

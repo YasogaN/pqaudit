@@ -18,7 +18,7 @@ pub enum FindingKind {
     CertExpiresAfterDeadline { expiry: NaiveDate, deadline: u32, algorithm: AlgorithmId },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {
     pub kind: FindingKind,
     pub severity: Severity,
