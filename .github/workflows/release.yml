@@ -9,11 +9,41 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  prepare:
+    name: Bump Cargo.toml version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit version bump and re-tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i.bak "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" Cargo.toml
+          rm -f Cargo.toml.bak
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml
+          if git diff --staged --quiet; then
+            echo "Version already up to date, no commit needed"
+          else
+            git commit -m "chore: bump version to $VERSION [skip ci]"
+            git push origin HEAD:main
+            git tag -f "$GITHUB_REF_NAME"
+            git push origin "$GITHUB_REF_NAME" --force
+          fi
+
   test:
     name: Verify tests pass before release
+    needs: prepare
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --no-default-features
       - run: cargo test --features mcp
@@ -48,6 +78,8 @@ jobs:
             rustflags: ""
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -96,6 +128,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -128,6 +162,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
 
       - uses: dtolnay/rust-toolchain@stable
 
