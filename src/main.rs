@@ -19,6 +19,16 @@ async fn main() {
         std::process::exit(3);
     });
 
+    // MCP server mode: serve over stdio and exit when transport closes.
+    #[cfg(feature = "mcp")]
+    if cli.mcp {
+        if let Err(e) = pqaudit::mcp::run_mcp_server().await {
+            eprintln!("MCP server error: {e}");
+            std::process::exit(3);
+        }
+        return;
+    }
+
     // Collect targets from positional args and optional targets file
     let mut targets = cli.targets.clone();
     if let Some(path) = &cli.targets_file {
