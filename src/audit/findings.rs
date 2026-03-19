@@ -1,4 +1,5 @@
 // src/audit/findings.rs — stub, completed in Task 7
+use std::fmt;
 use serde::{Deserialize, Serialize};
 use crate::{ChainPosition, CipherSuite, KeyInfo, NamedGroup, TlsVersion, AlgorithmId};
 use chrono::NaiveDate;
@@ -22,6 +23,29 @@ pub enum FindingKind {
 pub struct Finding {
     pub kind: FindingKind,
     pub severity: Severity,
+}
+
+impl fmt::Display for FindingKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ClassicalKeyExchangeOnly { group } =>
+                write!(f, "Classical key exchange only (group: {})", group.name),
+            Self::HybridKeyExchangeHrrRequired { group } =>
+                write!(f, "Hybrid PQC key exchange requires HelloRetryRequest (group: {})", group.name),
+            Self::DeprecatedPqcDraftCodepoint { code_point } =>
+                write!(f, "Deprecated PQC draft code point 0x{:04X} (Kyber draft)", code_point),
+            Self::WeakSymmetricCipher { suite } =>
+                write!(f, "Weak or deprecated cipher suite: {}", suite.name),
+            Self::ClassicalCertificate { position, key, deadline } =>
+                write!(f, "Classical certificate ({:?}) with {:?} must migrate by {}", position, key, deadline),
+            Self::DowngradeAccepted =>
+                write!(f, "Server accepted TLS downgrade below 1.3"),
+            Self::TlsVersionInsufficient { max_version } =>
+                write!(f, "Insufficient TLS version: {}", max_version),
+            Self::CertExpiresAfterDeadline { expiry, deadline, algorithm } =>
+                write!(f, "Certificate expires {} after {:?} deadline {}", expiry, algorithm, deadline),
+        }
+    }
 }
 
 impl Finding {

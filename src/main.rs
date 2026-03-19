@@ -59,8 +59,10 @@ async fn main() {
                     Ok(diffs) => {
                         // Print diff summary to stderr
                         for diff in &diffs {
+                            let trend = if diff.score_improved { "↑" } else { "↓" };
                             eprintln!(
-                                "  {} score: {:+} (resolved: {}, new: {})",
+                                "  {} {} score: {:+} (resolved: {}, new: {})",
+                                trend,
                                 diff.target,
                                 diff.score_delta,
                                 diff.resolved_findings.len(),

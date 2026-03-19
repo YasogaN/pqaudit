@@ -26,7 +26,7 @@ pub fn render_human(report: &ScanReport, compare_mode: bool) -> String {
 
     if compare_mode {
         if let Some(cmp) = &report.comparison {
-            out.push_str(&render_comparison(cmp, report));
+            out.push_str(&render_comparison(cmp));
         }
     }
 
@@ -68,7 +68,7 @@ fn render_target(target: &TargetReport) -> String {
             };
             let rule_id = finding.sarif_rule_id();
             out.push_str(&format!(
-                "    {} [{}] {:?}\n",
+                "    {} [{}] {}\n",
                 icon, rule_id, finding.kind
             ));
         }
@@ -77,8 +77,7 @@ fn render_target(target: &TargetReport) -> String {
     out
 }
 
-fn render_comparison(cmp: &ComparisonReport, report: &ScanReport) -> String {
-    let _ = report; // may be used for additional context in the future
+fn render_comparison(cmp: &ComparisonReport) -> String {
     let mut out = String::new();
     out.push_str(&format!("\n{}\n", "── Comparison ──────────────────────────────".dimmed()));
 
@@ -93,17 +92,18 @@ fn render_comparison(cmp: &ComparisonReport, report: &ScanReport) -> String {
     // Separator
     out.push_str(&format!("  {}\n", "─".repeat(20 + header.len() * 22)));
 
-    // Category rows
+    // Category rows — pad the raw value first, then colorize to avoid ANSI escape bytes
+    // being counted as printable width by format!.
     for cat in &cmp.categories {
         out.push_str(&format!("  {:20}", cat.name));
         for (i, &score) in cat.scores.iter().enumerate() {
-            let s = score.to_string();
+            let padded = format!("{:>20}", score);
             let cell = if cat.winner == Some(i) {
-                s.green().bold().to_string()
+                padded.green().bold().to_string()
             } else {
-                s.dimmed().to_string()
+                padded.dimmed().to_string()
             };
-            out.push_str(&format!("  {:>20}", cell));
+            out.push_str(&format!("  {}", cell));
         }
         out.push('\n');
     }
@@ -132,10 +132,13 @@ fn hndl_label(rating: &HndlRating) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
+    let char_count = s.chars().count();
+    if char_count <= max {
         s.to_string()
     } else {
-        format!("{}…", &s[..max.saturating_sub(1)])
+        // Find the byte index of the (max-1)th character boundary.
+        let cut = s.char_indices().nth(max.saturating_sub(1)).map(|(i, _)| i).unwrap_or(s.len());
+        format!("{}…", &s[..cut])
     }
 }
 

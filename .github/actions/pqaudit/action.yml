@@ -23,9 +23,15 @@ runs:
         chmod +x pqaudit
     - name: Run scan
       shell: bash
+      env:
+        PQAUDIT_TARGETS: ${{ inputs.targets }}
+        PQAUDIT_COMPLIANCE: ${{ inputs.compliance }}
+        PQAUDIT_OUTPUT: ${{ inputs.output-format }}
+        PQAUDIT_FAIL_BELOW: ${{ inputs.fail-below }}
       run: |
+        # shellcheck disable=SC2086 — word-split is intentional for space-separated targets
         ./pqaudit \
-          --compliance ${{ inputs.compliance }} \
-          --output ${{ inputs.output-format }} \
-          --fail-below ${{ inputs.fail-below }} \
-          ${{ inputs.targets }}
+          --compliance "$PQAUDIT_COMPLIANCE" \
+          --output "$PQAUDIT_OUTPUT" \
+          --fail-below "$PQAUDIT_FAIL_BELOW" \
+          $PQAUDIT_TARGETS

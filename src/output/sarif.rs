@@ -120,7 +120,7 @@ pub fn render_sarif(report: &ScanReport) -> String {
                 "driver": {
                     "name": "pqaudit",
                     "version": env!("CARGO_PKG_VERSION"),
-                    "informationUri": "https://github.com/pqaudit/pqaudit",
+                    "informationUri": "https://github.com/YasogaN/pqaudit",
                     "rules": rule_definitions()
                 }
             },

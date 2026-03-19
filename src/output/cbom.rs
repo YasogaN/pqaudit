@@ -87,8 +87,7 @@ fn build_components(targets: &[TargetReport]) -> Vec<Value> {
                     "assetType": "algorithm",
                     "algorithmProperties": {
                         "name": asset.algorithm
-                    },
-                    "oid": ""
+                    }
                 },
                 "evidence": {
                     "occurrences": asset.occurrences.iter().map(|o| json!({ "location": o })).collect::<Vec<_>>()
