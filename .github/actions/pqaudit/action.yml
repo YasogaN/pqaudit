@@ -1,0 +1,31 @@
+name: pqaudit TLS Scan
+description: Scan TLS endpoints for post-quantum readiness
+inputs:
+  targets:
+    description: Space-separated list of targets to scan
+    required: true
+  fail-below:
+    description: Exit code 1 if score below this threshold
+    default: "0"
+  compliance:
+    description: Scoring framework (nist, cnsa2, fips)
+    default: nist
+  output-format:
+    description: Output format (json, sarif, human)
+    default: sarif
+runs:
+  using: composite
+  steps:
+    - name: Download pqaudit
+      shell: bash
+      run: |
+        curl -sSL https://github.com/YasogaN/pqaudit/releases/latest/download/pqaudit-linux-x86_64 -o pqaudit
+        chmod +x pqaudit
+    - name: Run scan
+      shell: bash
+      run: |
+        ./pqaudit \
+          --compliance ${{ inputs.compliance }} \
+          --output ${{ inputs.output-format }} \
+          --fail-below ${{ inputs.fail-below }} \
+          ${{ inputs.targets }}
