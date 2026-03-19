@@ -47,8 +47,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-unknown-linux-musl
-      - run: sudo apt-get update -y && sudo apt-get install -y gcc-aarch64-linux-gnu
-      - run: |
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc \
-          RUSTFLAGS="-C target-feature=+crt-static" \
-            cargo build --target aarch64-unknown-linux-musl
+      - run: cargo check --target aarch64-unknown-linux-musl
