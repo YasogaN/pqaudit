@@ -210,6 +210,8 @@ mod tests {
             }),
             downgrade: DowngradeResult::Rejected,
             error,
+            negotiated_group: None,
+            negotiated_suite: None,
         }
     }
 

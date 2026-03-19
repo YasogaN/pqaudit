@@ -131,6 +131,8 @@ async fn scan_single(target: String, config: &ScanConfig) -> TargetReport {
                 cipher_inventory,
                 downgrade,
                 error: Some(e.to_string()),
+                negotiated_group: None,
+                negotiated_suite: None,
             }
         }
         Ok(pqc) => {
@@ -171,6 +173,8 @@ async fn scan_single(target: String, config: &ScanConfig) -> TargetReport {
                 cipher_inventory,
                 downgrade,
                 error: None,
+                negotiated_group: Some(pqc.negotiated_group),
+                negotiated_suite: Some(pqc.negotiated_suite),
             }
         }
     }

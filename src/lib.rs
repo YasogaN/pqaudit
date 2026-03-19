@@ -179,6 +179,12 @@ pub struct TargetReport {
     pub cipher_inventory: Option<CipherInventory>,
     pub downgrade: DowngradeResult,
     pub error: Option<String>,
+    /// Negotiated key exchange group from the PQC handshake probe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub negotiated_group: Option<NamedGroup>,
+    /// Negotiated cipher suite from the PQC handshake probe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub negotiated_suite: Option<CipherSuite>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,6 +252,15 @@ pub mod tests_common {
             }),
             downgrade: DowngradeResult::Rejected,
             error: None,
+            negotiated_group: Some(crate::NamedGroup {
+                code_point: 0x11EC,
+                name: "X25519MLKEM768".into(),
+                is_pqc: true,
+            }),
+            negotiated_suite: Some(CipherSuite {
+                id: 0x1302,
+                name: "TLS_AES_256_GCM_SHA384".into(),
+            }),
         }
     }
 
