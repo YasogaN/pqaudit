@@ -99,32 +99,50 @@ pub fn remediation_for(kind: &FindingKind) -> Remediation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{NamedGroup, TlsVersion, CipherSuite};
     use crate::audit::findings::FindingKind;
+    use crate::{CipherSuite, NamedGroup, TlsVersion};
 
     #[test]
     fn classical_key_exchange_has_nginx_snippet() {
         let r = remediation_for(&FindingKind::ClassicalKeyExchangeOnly {
-            group: NamedGroup { code_point: 0x001D, name: "x25519".into(), is_pqc: false },
+            group: NamedGroup {
+                code_point: 0x001D,
+                name: "x25519".into(),
+                is_pqc: false,
+            },
         });
-        assert!(r.config_snippets.iter().any(|(platform, _)| *platform == "nginx"));
+        assert!(r
+            .config_snippets
+            .iter()
+            .any(|(platform, _)| *platform == "nginx"));
         assert!(r.text.contains("X25519MLKEM768"));
     }
 
     #[test]
     fn all_finding_kinds_return_non_empty_text() {
-        use crate::{KeyInfo, ChainPosition, AlgorithmId};
+        use crate::{AlgorithmId, ChainPosition, KeyInfo};
         use chrono::NaiveDate;
         let kinds = vec![
             FindingKind::ClassicalKeyExchangeOnly {
-                group: NamedGroup { code_point: 0x001D, name: "x25519".into(), is_pqc: false }
+                group: NamedGroup {
+                    code_point: 0x001D,
+                    name: "x25519".into(),
+                    is_pqc: false,
+                },
             },
             FindingKind::HybridKeyExchangeHrrRequired {
-                group: NamedGroup { code_point: 0x11EC, name: "X25519MLKEM768".into(), is_pqc: true }
+                group: NamedGroup {
+                    code_point: 0x11EC,
+                    name: "X25519MLKEM768".into(),
+                    is_pqc: true,
+                },
             },
             FindingKind::DeprecatedPqcDraftCodepoint { code_point: 0x6399 },
             FindingKind::WeakSymmetricCipher {
-                suite: CipherSuite { id: 0x000A, name: "TLS_RSA_WITH_3DES_EDE_CBC_SHA".into() }
+                suite: CipherSuite {
+                    id: 0x000A,
+                    name: "TLS_RSA_WITH_3DES_EDE_CBC_SHA".into(),
+                },
             },
             FindingKind::ClassicalCertificate {
                 position: ChainPosition::Leaf,
@@ -132,7 +150,9 @@ mod tests {
                 deadline: 2030,
             },
             FindingKind::DowngradeAccepted,
-            FindingKind::TlsVersionInsufficient { max_version: TlsVersion::Tls12 },
+            FindingKind::TlsVersionInsufficient {
+                max_version: TlsVersion::Tls12,
+            },
             FindingKind::CertExpiresAfterDeadline {
                 expiry: NaiveDate::from_ymd_opt(2032, 1, 1).unwrap(),
                 deadline: 2030,

@@ -2,8 +2,8 @@ pub mod cnsa2;
 pub mod fips;
 pub mod iana_ciphers;
 pub mod iana_groups;
-pub mod nist_ir8547;
 pub mod iana_sigalgs;
+pub mod nist_ir8547;
 
 use crate::AlgorithmId;
 

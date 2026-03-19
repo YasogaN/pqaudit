@@ -1,5 +1,5 @@
-use crate::audit::tables::DeadlineTable;
 use crate::audit::findings::{FindingKind, Severity};
+use crate::audit::tables::DeadlineTable;
 use crate::ProbeResults;
 use serde::{Deserialize, Serialize};
 

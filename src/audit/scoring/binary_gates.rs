@@ -41,26 +41,28 @@ fn downgrade_points(downgrade: &DowngradeResult) -> u8 {
 }
 
 impl ScoringModel for FipsBinaryGatesModel {
-    fn name(&self) -> &'static str { "fips-binary-gates" }
+    fn name(&self) -> &'static str {
+        "fips-binary-gates"
+    }
 
     fn description(&self) -> &'static str {
         "FIPS binary-gates scoring model — non-FIPS primitives score 0"
     }
 
     fn score(&self, probe: &ProbeResults, _table: &dyn DeadlineTable) -> ScoringResult {
-        let (ke_points, tls_points, cs_points, downgrade_pts) =
-            match &probe.pqc_handshake {
-                Ok(hs) => {
-                    let ke = fips_key_exchange_points(hs.negotiated_group.code_point);
-                    let tls = tls_version_points(&hs.negotiated_version);
-                    let cs = fips_cipher_suite_points(hs.negotiated_suite.id);
-                    let dg = downgrade_points(&probe.downgrade);
-                    (ke, tls, cs, dg)
-                }
-                Err(_) => (0, 0, 0, downgrade_points(&probe.downgrade)),
-            };
+        let (ke_points, tls_points, cs_points, downgrade_pts) = match &probe.pqc_handshake {
+            Ok(hs) => {
+                let ke = fips_key_exchange_points(hs.negotiated_group.code_point);
+                let tls = tls_version_points(&hs.negotiated_version);
+                let cs = fips_cipher_suite_points(hs.negotiated_suite.id);
+                let dg = downgrade_points(&probe.downgrade);
+                (ke, tls, cs, dg)
+            }
+            Err(_) => (0, 0, 0, downgrade_points(&probe.downgrade)),
+        };
 
-        let raw_total = ke_points as u16 + tls_points as u16 + cs_points as u16 + downgrade_pts as u16;
+        let raw_total =
+            ke_points as u16 + tls_points as u16 + cs_points as u16 + downgrade_pts as u16;
         let total = raw_total.min(100) as u8;
 
         ScoringResult {
@@ -116,7 +118,9 @@ impl ScoringModel for FipsBinaryGatesModel {
 mod tests {
     use super::*;
     use crate::audit::tables::fips::FipsTable;
-    use crate::{CipherSuite, DowngradeResult, NamedGroup, ProbeResults, PqcHandshakeResult, TlsVersion};
+    use crate::{
+        CipherSuite, DowngradeResult, NamedGroup, PqcHandshakeResult, ProbeResults, TlsVersion,
+    };
 
     fn pqc_probe_result(code_point: u16) -> ProbeResults {
         ProbeResults {
@@ -124,8 +128,15 @@ mod tests {
             port: 443,
             pqc_handshake: Ok(PqcHandshakeResult {
                 negotiated_version: TlsVersion::Tls13,
-                negotiated_suite: CipherSuite { id: 0x1302, name: "TLS_AES_256_GCM_SHA384".into() },
-                negotiated_group: NamedGroup { code_point, name: "test".into(), is_pqc: true },
+                negotiated_suite: CipherSuite {
+                    id: 0x1302,
+                    name: "TLS_AES_256_GCM_SHA384".into(),
+                },
+                negotiated_group: NamedGroup {
+                    code_point,
+                    name: "test".into(),
+                    is_pqc: true,
+                },
                 hrr_required: false,
                 cert_chain_der: vec![],
             }),
@@ -149,7 +160,10 @@ mod tests {
         let table = FipsTable;
         let mut probe = pqc_probe_result(0x11EC);
         if let Ok(ref mut hs) = probe.pqc_handshake {
-            hs.negotiated_suite = CipherSuite { id: 0x1303, name: "TLS_CHACHA20_POLY1305_SHA256".into() };
+            hs.negotiated_suite = CipherSuite {
+                id: 0x1303,
+                name: "TLS_CHACHA20_POLY1305_SHA256".into(),
+            };
         }
         let result = model.score(&probe, &table);
         assert_eq!(result.cipher_suite.points, 0);

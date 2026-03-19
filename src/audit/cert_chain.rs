@@ -1,8 +1,8 @@
+use crate::audit::findings::{Finding, FindingKind, Severity};
+use crate::audit::tables::{nist_ir8547::NistIr8547Table, DeadlineTable};
+use crate::{AlgorithmId, ChainPosition, KeyInfo};
 use serde::{Deserialize, Serialize};
 use x509_parser::prelude::*;
-use crate::{AlgorithmId, ChainPosition, KeyInfo};
-use crate::audit::findings::{Finding, FindingKind, Severity};
-use crate::audit::tables::{DeadlineTable, nist_ir8547::NistIr8547Table};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertEntry {
@@ -27,21 +27,35 @@ fn parse_key_info(spki: &SubjectPublicKeyInfo) -> KeyInfo {
         "1.2.840.113549.1.1.1" => {
             // Rough heuristic: RSA-2048 DER public key is ~270 bytes, RSA-4096 ~550 bytes
             let byte_len = spki.subject_public_key.data.len();
-            let rsa_bits: u32 = if byte_len > 500 { 4096 } else if byte_len > 380 { 3072 } else { 2048 };
+            let rsa_bits: u32 = if byte_len > 500 {
+                4096
+            } else if byte_len > 380 {
+                3072
+            } else {
+                2048
+            };
             KeyInfo::Rsa { bits: rsa_bits }
         }
         // ecPublicKey
         "1.2.840.10045.2.1" => {
-            let curve_oid = spki.algorithm.parameters
+            let curve_oid = spki
+                .algorithm
+                .parameters
                 .as_ref()
                 .and_then(|p| p.as_oid().ok())
                 .map(|o| o.to_id_string())
                 .unwrap_or_default();
             match curve_oid.as_str() {
-                "1.2.840.10045.3.1.7" => KeyInfo::Ec { curve: "P-256".into() },
-                "1.3.132.0.34"        => KeyInfo::Ec { curve: "P-384".into() },
-                "1.3.132.0.35"        => KeyInfo::Ec { curve: "P-521".into() },
-                _                     => KeyInfo::Ec { curve: curve_oid },
+                "1.2.840.10045.3.1.7" => KeyInfo::Ec {
+                    curve: "P-256".into(),
+                },
+                "1.3.132.0.34" => KeyInfo::Ec {
+                    curve: "P-384".into(),
+                },
+                "1.3.132.0.35" => KeyInfo::Ec {
+                    curve: "P-521".into(),
+                },
+                _ => KeyInfo::Ec { curve: curve_oid },
             }
         }
         // id-EdDSA Ed25519
@@ -58,25 +72,33 @@ fn parse_algorithm_id(spki: &SubjectPublicKeyInfo) -> Option<AlgorithmId> {
     match oid.as_str() {
         "1.2.840.113549.1.1.1" => {
             let byte_len = spki.subject_public_key.data.len();
-            let min_bits: u32 = if byte_len > 500 { 4096 } else if byte_len > 380 { 3072 } else { 2048 };
+            let min_bits: u32 = if byte_len > 500 {
+                4096
+            } else if byte_len > 380 {
+                3072
+            } else {
+                2048
+            };
             Some(AlgorithmId::Rsa { min_bits })
         }
         "1.2.840.10045.2.1" => {
-            let curve = spki.algorithm.parameters
+            let curve = spki
+                .algorithm
+                .parameters
                 .as_ref()
                 .and_then(|p| p.as_oid().ok())
                 .map(|o| o.to_id_string())
                 .unwrap_or_default();
             match curve.as_str() {
                 "1.2.840.10045.3.1.7" => Some(AlgorithmId::EcP256),
-                "1.3.132.0.34"        => Some(AlgorithmId::EcP384),
-                "1.3.132.0.35"        => Some(AlgorithmId::EcP521),
-                _                     => None, // unrecognized curve — no finding
+                "1.3.132.0.34" => Some(AlgorithmId::EcP384),
+                "1.3.132.0.35" => Some(AlgorithmId::EcP521),
+                _ => None, // unrecognized curve — no finding
             }
         }
         "1.3.101.112" => Some(AlgorithmId::Ed25519),
         "1.3.101.113" => Some(AlgorithmId::Ed448),
-        _             => None, // unrecognized algorithm — no finding
+        _ => None, // unrecognized algorithm — no finding
     }
 }
 
@@ -85,7 +107,10 @@ fn parse_algorithm_id(spki: &SubjectPublicKeyInfo) -> Option<AlgorithmId> {
 /// The first entry is the leaf; last is the root (or closest to root).
 pub fn audit_chain(chain_der: &[Vec<u8>]) -> CertChainReport {
     if chain_der.is_empty() {
-        return CertChainReport { entries: vec![], findings: vec![] };
+        return CertChainReport {
+            entries: vec![],
+            findings: vec![],
+        };
     }
 
     let table = NistIr8547Table;
@@ -116,10 +141,12 @@ pub fn audit_chain(chain_der: &[Vec<u8>]) -> CertChainReport {
             not_after.year(),
             not_after.month() as u32,
             not_after.day() as u32,
-        ).unwrap_or_default();
+        )
+        .unwrap_or_default();
         let subject = cert.subject().to_string();
 
-        let is_classical = matches!(key,
+        let is_classical = matches!(
+            key,
             KeyInfo::Rsa { .. } | KeyInfo::Ec { .. } | KeyInfo::Ed25519 | KeyInfo::Ed448
         );
 
@@ -133,7 +160,11 @@ pub fn audit_chain(chain_der: &[Vec<u8>]) -> CertChainReport {
                             key: key.clone(),
                             deadline,
                         },
-                        severity: if deadline <= 2030 { Severity::Warning } else { Severity::Note },
+                        severity: if deadline <= 2030 {
+                            Severity::Warning
+                        } else {
+                            Severity::Note
+                        },
                     });
 
                     if expiry_year > deadline {

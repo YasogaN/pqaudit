@@ -8,9 +8,9 @@ pub struct Cnsa2StrictModel;
 fn cnsa2_key_exchange_points(code_point: u16) -> u8 {
     match code_point {
         0x0202 | 0x11ED => 50, // Pure ML-KEM-1024 or SecP384r1MLKEM1024 (CNSA 2.0 compliant)
-        0x0201 => 35,           // ML-KEM-768 (below CNSA 2.0 recommended level)
-        0x11EC => 30,           // X25519MLKEM768
-        0x11EB => 25,           // SecP256r1MLKEM768
+        0x0201 => 35,          // ML-KEM-768 (below CNSA 2.0 recommended level)
+        0x11EC => 30,          // X25519MLKEM768
+        0x11EB => 25,          // SecP256r1MLKEM768
         _ => 0,
     }
 }
@@ -38,26 +38,28 @@ fn downgrade_points(downgrade: &DowngradeResult) -> u8 {
 }
 
 impl ScoringModel for Cnsa2StrictModel {
-    fn name(&self) -> &'static str { "cnsa2-strict" }
+    fn name(&self) -> &'static str {
+        "cnsa2-strict"
+    }
 
     fn description(&self) -> &'static str {
         "CNSA 2.0 strict binary-gates scoring model — ML-KEM-1024 required"
     }
 
     fn score(&self, probe: &ProbeResults, _table: &dyn DeadlineTable) -> ScoringResult {
-        let (ke_points, tls_points, cs_points, downgrade_pts) =
-            match &probe.pqc_handshake {
-                Ok(hs) => {
-                    let ke = cnsa2_key_exchange_points(hs.negotiated_group.code_point);
-                    let tls = tls_version_points(&hs.negotiated_version);
-                    let cs = cnsa2_cipher_suite_points(hs.negotiated_suite.id);
-                    let dg = downgrade_points(&probe.downgrade);
-                    (ke, tls, cs, dg)
-                }
-                Err(_) => (0, 0, 0, downgrade_points(&probe.downgrade)),
-            };
+        let (ke_points, tls_points, cs_points, downgrade_pts) = match &probe.pqc_handshake {
+            Ok(hs) => {
+                let ke = cnsa2_key_exchange_points(hs.negotiated_group.code_point);
+                let tls = tls_version_points(&hs.negotiated_version);
+                let cs = cnsa2_cipher_suite_points(hs.negotiated_suite.id);
+                let dg = downgrade_points(&probe.downgrade);
+                (ke, tls, cs, dg)
+            }
+            Err(_) => (0, 0, 0, downgrade_points(&probe.downgrade)),
+        };
 
-        let raw_total = ke_points as u16 + tls_points as u16 + cs_points as u16 + downgrade_pts as u16;
+        let raw_total =
+            ke_points as u16 + tls_points as u16 + cs_points as u16 + downgrade_pts as u16;
         let total = raw_total.min(100) as u8;
 
         ScoringResult {
@@ -113,7 +115,9 @@ impl ScoringModel for Cnsa2StrictModel {
 mod tests {
     use super::*;
     use crate::audit::tables::cnsa2::Cnsa2Table;
-    use crate::{CipherSuite, DowngradeResult, NamedGroup, ProbeResults, PqcHandshakeResult, TlsVersion};
+    use crate::{
+        CipherSuite, DowngradeResult, NamedGroup, PqcHandshakeResult, ProbeResults, TlsVersion,
+    };
 
     fn pqc_probe_result(code_point: u16, hrr: bool) -> ProbeResults {
         ProbeResults {
@@ -121,8 +125,15 @@ mod tests {
             port: 443,
             pqc_handshake: Ok(PqcHandshakeResult {
                 negotiated_version: TlsVersion::Tls13,
-                negotiated_suite: CipherSuite { id: 0x1302, name: "TLS_AES_256_GCM_SHA384".into() },
-                negotiated_group: NamedGroup { code_point, name: "test".into(), is_pqc: true },
+                negotiated_suite: CipherSuite {
+                    id: 0x1302,
+                    name: "TLS_AES_256_GCM_SHA384".into(),
+                },
+                negotiated_group: NamedGroup {
+                    code_point,
+                    name: "test".into(),
+                    is_pqc: true,
+                },
                 hrr_required: hrr,
                 cert_chain_der: vec![],
             }),
@@ -165,7 +176,10 @@ mod tests {
         // Use a probe where the cipher suite is AES-128-GCM
         let mut probe = pqc_probe_result(0x0202, false);
         if let Ok(ref mut hs) = probe.pqc_handshake {
-            hs.negotiated_suite = CipherSuite { id: 0x1301, name: "TLS_AES_128_GCM_SHA256".into() };
+            hs.negotiated_suite = CipherSuite {
+                id: 0x1301,
+                name: "TLS_AES_128_GCM_SHA256".into(),
+            };
         }
         let result = model.score(&probe, &table);
         assert_eq!(result.cipher_suite.points, 0);

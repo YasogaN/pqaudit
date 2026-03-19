@@ -1,8 +1,14 @@
-use serde::{Deserialize, Serialize};
 use crate::ProbeResults;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum HndlRating { None, Low, Medium, High, Critical }
+pub enum HndlRating {
+    None,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HndlAssessment {
@@ -30,41 +36,46 @@ pub trait HndlModel: Send + Sync {
 pub struct DefaultHndlModel;
 
 impl HndlModel for DefaultHndlModel {
-    fn name(&self) -> &'static str { "default" }
+    fn name(&self) -> &'static str {
+        "default"
+    }
 
     fn assess(&self, probe: &ProbeResults, config: &HndlConfig) -> HndlAssessment {
-        let group_code = probe.pqc_handshake.as_ref()
+        let group_code = probe
+            .pqc_handshake
+            .as_ref()
             .map(|r| r.negotiated_group.code_point)
             .unwrap_or(0);
 
         let exposure = (config.q_day_year as f32) - (config.current_year as f32);
 
-        let cert_before_q = config.cert_expiry_year
-            .map_or(false, |y| y < config.q_day_year);
+        let cert_before_q = config
+            .cert_expiry_year
+            .is_some_and(|y| y < config.q_day_year);
 
-        let is_pure_pqc  = matches!(group_code, 0x0200 | 0x0201 | 0x0202);
+        let is_pure_pqc = matches!(group_code, 0x0200..=0x0202);
         // 0x6399 (Kyber Draft) is excluded — pre-FIPS draft is not considered sufficient HNDL protection
-        let is_hybrid_pqc = matches!(group_code, 0x11EB | 0x11EC | 0x11ED);
+        let is_hybrid_pqc = matches!(group_code, 0x11EB..=0x11ED);
 
         let rating = if is_pure_pqc {
             HndlRating::None
         } else if is_hybrid_pqc {
             match exposure {
                 e if e < 2.0 => HndlRating::Low,
-                _             => HndlRating::Medium,
+                _ => HndlRating::Medium,
             }
         } else {
             // Classical only — cert_before_q can reduce by one level
             let base_rating = match exposure {
                 e if e < 2.0 => HndlRating::Medium,
                 e if e < 5.0 => HndlRating::High,
-                _             => HndlRating::Critical,
+                _ => HndlRating::Critical,
             };
             if cert_before_q {
                 match base_rating {
                     HndlRating::Critical => HndlRating::High,
-                    HndlRating::High     => HndlRating::Medium,
-                    other                => other,
+                    HndlRating::High => HndlRating::Medium,
+                    other => other,
                 }
             } else {
                 base_rating
@@ -83,7 +94,9 @@ impl HndlModel for DefaultHndlModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CipherSuite, DowngradeResult, NamedGroup, ProbeResults, PqcHandshakeResult, TlsVersion};
+    use crate::{
+        CipherSuite, DowngradeResult, NamedGroup, PqcHandshakeResult, ProbeResults, TlsVersion,
+    };
 
     fn stub_probe_with_group(code_point: u16) -> ProbeResults {
         ProbeResults {
@@ -91,8 +104,15 @@ mod tests {
             port: 443,
             pqc_handshake: Ok(PqcHandshakeResult {
                 negotiated_version: TlsVersion::Tls13,
-                negotiated_suite: CipherSuite { id: 0x1302, name: "TLS_AES_256_GCM_SHA384".into() },
-                negotiated_group: NamedGroup { code_point, name: "test".into(), is_pqc: code_point != 0x001D },
+                negotiated_suite: CipherSuite {
+                    id: 0x1302,
+                    name: "TLS_AES_256_GCM_SHA384".into(),
+                },
+                negotiated_group: NamedGroup {
+                    code_point,
+                    name: "test".into(),
+                    is_pqc: code_point != 0x001D,
+                },
                 hrr_required: false,
                 cert_chain_der: vec![],
             }),
@@ -101,9 +121,18 @@ mod tests {
         }
     }
 
-    fn assess_hndl(group_code: u16, current_year: u32, q_day_year: u32, cert_expiry_year: Option<u32>) -> HndlAssessment {
+    fn assess_hndl(
+        group_code: u16,
+        current_year: u32,
+        q_day_year: u32,
+        cert_expiry_year: Option<u32>,
+    ) -> HndlAssessment {
         let probe = stub_probe_with_group(group_code);
-        let config = HndlConfig { q_day_year, current_year, cert_expiry_year };
+        let config = HndlConfig {
+            q_day_year,
+            current_year,
+            cert_expiry_year,
+        };
         DefaultHndlModel.assess(&probe, &config)
     }
 

@@ -1,30 +1,42 @@
-use chrono::Datelike;
 use crate::audit::findings::{FindingKind, Severity};
 use crate::audit::scoring::model::{CategoryScore, ScoringModel, ScoringResult};
 use crate::audit::tables::DeadlineTable;
 use crate::{DowngradeResult, ProbeResults, TlsVersion};
+use chrono::Datelike;
 
 pub struct NistWeightedModel;
 
 pub fn key_exchange_points(code_point: u16, hrr: bool, current_year: u32) -> u8 {
     match code_point {
-        0x11EC => if hrr { 40 } else { 50 },  // X25519MLKEM768
-        0x11EB => 45,                           // SecP256r1MLKEM768
-        0x11ED => 50,                           // SecP384r1MLKEM1024
-        0x0202 => 50,                           // Pure ML-KEM-1024
-        0x0201 => if current_year >= 2033 { 50 } else { 48 }, // Pure ML-KEM-768
-        0x6399 => 20,                           // Kyber Draft (deprecated)
-        _      => 0,                            // Classical only
+        0x11EC => {
+            if hrr {
+                40
+            } else {
+                50
+            }
+        } // X25519MLKEM768
+        0x11EB => 45, // SecP256r1MLKEM768
+        0x11ED => 50, // SecP384r1MLKEM1024
+        0x0202 => 50, // Pure ML-KEM-1024
+        0x0201 => {
+            if current_year >= 2033 {
+                50
+            } else {
+                48
+            }
+        } // Pure ML-KEM-768
+        0x6399 => 20, // Kyber Draft (deprecated)
+        _ => 0,       // Classical only
     }
 }
 
 pub fn timeline_multiplier(years_until_disallowance: i64) -> f32 {
     match years_until_disallowance {
-        y if y >= 9  => 1.00,
-        y if y >= 5  => 0.75,
-        y if y >= 2  => 0.40,
-        y if y >= 1  => 0.10,
-        _            => 0.00,  // y <= 0: deadline reached or passed
+        y if y >= 9 => 1.00,
+        y if y >= 5 => 0.75,
+        y if y >= 2 => 0.40,
+        y if y >= 1 => 0.10,
+        _ => 0.00, // y <= 0: deadline reached or passed
     }
 }
 
@@ -57,7 +69,9 @@ fn downgrade_points(downgrade: &DowngradeResult) -> u8 {
 }
 
 impl ScoringModel for NistWeightedModel {
-    fn name(&self) -> &'static str { "nist-weighted" }
+    fn name(&self) -> &'static str {
+        "nist-weighted"
+    }
 
     fn description(&self) -> &'static str {
         "NIST IR 8547-aligned weighted scoring model for PQC readiness (0-100)"
@@ -67,27 +81,23 @@ impl ScoringModel for NistWeightedModel {
         // TODO Task 7: _table will be used for cert chain scoring and cipher suite timeline multiplier
         let current_year = chrono::Utc::now().year() as u32;
 
-        let (ke_points, tls_points, cs_points, downgrade_pts) =
-            match &probe.pqc_handshake {
-                Ok(hs) => {
-                    let ke = key_exchange_points(
-                        hs.negotiated_group.code_point,
-                        hs.hrr_required,
-                        current_year,
-                    );
-                    let tls = tls_version_points(&hs.negotiated_version);
-                    let cs = cipher_suite_points(hs.negotiated_suite.id);
-                    let dg = downgrade_points(&probe.downgrade);
-                    (ke, tls, cs, dg)
-                }
-                Err(_) => (0, 0, 0, downgrade_points(&probe.downgrade)),
-            };
+        let (ke_points, tls_points, cs_points, downgrade_pts) = match &probe.pqc_handshake {
+            Ok(hs) => {
+                let ke = key_exchange_points(
+                    hs.negotiated_group.code_point,
+                    hs.hrr_required,
+                    current_year,
+                );
+                let tls = tls_version_points(&hs.negotiated_version);
+                let cs = cipher_suite_points(hs.negotiated_suite.id);
+                let dg = downgrade_points(&probe.downgrade);
+                (ke, tls, cs, dg)
+            }
+            Err(_) => (0, 0, 0, downgrade_points(&probe.downgrade)),
+        };
 
         let raw_total =
-            ke_points as u16
-            + tls_points as u16
-            + cs_points as u16
-            + downgrade_pts as u16;
+            ke_points as u16 + tls_points as u16 + cs_points as u16 + downgrade_pts as u16;
         // cert_chain is 0 until Task 7
         let total = raw_total.min(100) as u8;
 
@@ -144,7 +154,9 @@ impl ScoringModel for NistWeightedModel {
 mod tests {
     use super::*;
     use crate::audit::tables::nist_ir8547::NistIr8547Table;
-    use crate::{CipherSuite, DowngradeResult, NamedGroup, ProbeResults, PqcHandshakeResult, TlsVersion};
+    use crate::{
+        CipherSuite, DowngradeResult, NamedGroup, PqcHandshakeResult, ProbeResults, TlsVersion,
+    };
 
     fn pqc_probe_result(group_code: u16, hrr: bool) -> ProbeResults {
         ProbeResults {
@@ -152,7 +164,10 @@ mod tests {
             port: 443,
             pqc_handshake: Ok(PqcHandshakeResult {
                 negotiated_version: TlsVersion::Tls13,
-                negotiated_suite: CipherSuite { id: 0x1301, name: "TLS_AES_128_GCM_SHA256".into() },
+                negotiated_suite: CipherSuite {
+                    id: 0x1301,
+                    name: "TLS_AES_128_GCM_SHA256".into(),
+                },
                 negotiated_group: NamedGroup {
                     code_point: group_code,
                     name: "X25519MLKEM768".into(),
@@ -196,11 +211,11 @@ mod tests {
     #[test]
     fn timeline_multiplier_boundary_values() {
         assert_eq!(timeline_multiplier(-1), 0.00);
-        assert_eq!(timeline_multiplier(0),  0.00);
-        assert_eq!(timeline_multiplier(1),  0.10);
-        assert_eq!(timeline_multiplier(2),  0.40);
-        assert_eq!(timeline_multiplier(5),  0.75);
-        assert_eq!(timeline_multiplier(9),  1.00);
+        assert_eq!(timeline_multiplier(0), 0.00);
+        assert_eq!(timeline_multiplier(1), 0.10);
+        assert_eq!(timeline_multiplier(2), 0.40);
+        assert_eq!(timeline_multiplier(5), 0.75);
+        assert_eq!(timeline_multiplier(9), 1.00);
     }
 
     #[test]
@@ -217,7 +232,9 @@ mod tests {
 mod property_tests {
     use super::*;
     use crate::audit::tables::nist_ir8547::NistIr8547Table;
-    use crate::{CipherSuite, DowngradeResult, NamedGroup, ProbeResults, PqcHandshakeResult, TlsVersion};
+    use crate::{
+        CipherSuite, DowngradeResult, NamedGroup, PqcHandshakeResult, ProbeResults, TlsVersion,
+    };
     use proptest::prelude::*;
 
     fn make_probe(group_code: u16, hrr: bool) -> ProbeResults {
@@ -226,8 +243,15 @@ mod property_tests {
             port: 443,
             pqc_handshake: Ok(PqcHandshakeResult {
                 negotiated_version: TlsVersion::Tls13,
-                negotiated_suite: CipherSuite { id: 0x1301, name: "TLS_AES_128_GCM_SHA256".into() },
-                negotiated_group: NamedGroup { code_point: group_code, name: "test".into(), is_pqc: true },
+                negotiated_suite: CipherSuite {
+                    id: 0x1301,
+                    name: "TLS_AES_128_GCM_SHA256".into(),
+                },
+                negotiated_group: NamedGroup {
+                    code_point: group_code,
+                    name: "test".into(),
+                    is_pqc: true,
+                },
                 hrr_required: hrr,
                 cert_chain_der: vec![],
             }),

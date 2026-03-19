@@ -1,24 +1,19 @@
-use crate::cli::ComplianceMode;
-use crate::audit::tables::{
-    DeadlineTable,
-    nist_ir8547::NistIr8547Table,
-    cnsa2::Cnsa2Table,
-    fips::FipsTable,
-};
 use crate::audit::scoring::model::ScoringModel;
 use crate::audit::scoring::{
-    weighted::NistWeightedModel,
-    cnsa2_strict::Cnsa2StrictModel,
-    binary_gates::FipsBinaryGatesModel,
+    binary_gates::FipsBinaryGatesModel, cnsa2_strict::Cnsa2StrictModel, weighted::NistWeightedModel,
 };
+use crate::audit::tables::{
+    cnsa2::Cnsa2Table, fips::FipsTable, nist_ir8547::NistIr8547Table, DeadlineTable,
+};
+use crate::cli::ComplianceMode;
 
 /// Returns the (DeadlineTable, ScoringModel) pair for the given compliance mode.
 /// This is the single place that knows which table and model belong together.
 pub fn compliance_pair(mode: ComplianceMode) -> (Box<dyn DeadlineTable>, Box<dyn ScoringModel>) {
     match mode {
-        ComplianceMode::Nist  => (Box::new(NistIr8547Table), Box::new(NistWeightedModel)),
-        ComplianceMode::Cnsa2 => (Box::new(Cnsa2Table),      Box::new(Cnsa2StrictModel)),
-        ComplianceMode::Fips  => (Box::new(FipsTable),       Box::new(FipsBinaryGatesModel)),
+        ComplianceMode::Nist => (Box::new(NistIr8547Table), Box::new(NistWeightedModel)),
+        ComplianceMode::Cnsa2 => (Box::new(Cnsa2Table), Box::new(Cnsa2StrictModel)),
+        ComplianceMode::Fips => (Box::new(FipsTable), Box::new(FipsBinaryGatesModel)),
     }
 }
 
