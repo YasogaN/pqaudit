@@ -1,0 +1,54 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable, beta]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+      # Test without MCP feature (non-default path) and with MCP feature separately.
+      - run: cargo test --no-default-features
+      - run: cargo test --features mcp
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --check
+      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --features mcp -- -D warnings
+
+  static-binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - run: |
+          RUSTFLAGS="-C target-feature=+crt-static" \
+            cargo build --release --target x86_64-unknown-linux-musl
+      - run: ldd target/x86_64-unknown-linux-musl/release/pqaudit | grep "not a dynamic" || (ldd target/x86_64-unknown-linux-musl/release/pqaudit && exit 1)
+
+  cross-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+      - run: sudo apt-get update -y && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - run: |
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc \
+          RUSTFLAGS="-C target-feature=+crt-static" \
+            cargo build --target aarch64-unknown-linux-musl
