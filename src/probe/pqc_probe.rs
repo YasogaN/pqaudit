@@ -167,11 +167,8 @@ pub async fn pqc_probe(
     // Step 1: Raw probe to get negotiated group and HRR status.
     // Returns None when the server negotiated TLS 1.2 (no key_share group available).
     let raw = probe_raw_group(host, port, sni, timeout_ms).await?;
-    let (group_code, hrr_required) = match raw {
-        Some(pair) => pair,
-        // TLS 1.2-only server: proceed to rustls probe for cert/suite/version, use code 0 for group.
-        None => (0u16, false),
-    };
+    // TLS 1.2-only server: proceed to rustls probe for cert/suite/version, use code 0 for group.
+    let (group_code, hrr_required): (u16, bool) = raw.unwrap_or_default();
 
     // Step 2: rustls handshake to get cert chain, cipher suite, and TLS version
     let root_store = RootCertStore {
