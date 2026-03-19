@@ -186,6 +186,60 @@ pub struct ScanReport {
     pub targets: Vec<TargetReport>,
 }
 
+// ── Test helpers shared across modules ────────────────────────────────────────
+#[cfg(test)]
+pub mod tests_common {
+    use crate::{
+        CipherInventory, DowngradeResult, ScanReport, TargetReport, TlsVersion,
+    };
+    use crate::audit::{
+        cert_chain::CertChainReport,
+        findings::Finding,
+        hndl::{HndlAssessment, HndlRating},
+        scoring::model::{CategoryScore, ScoringResult},
+    };
+    use crate::cli::ComplianceMode;
+
+    fn zero_category(name: &str) -> CategoryScore {
+        CategoryScore { name: name.into(), points: 0, max_points: 0, notes: vec![] }
+    }
+
+    pub fn stub_target_report(score: u8) -> TargetReport {
+        TargetReport {
+            target: "example.com".into(),
+            port: 443,
+            score: ScoringResult {
+                total: score,
+                key_exchange: zero_category("key_exchange"),
+                tls_version: zero_category("tls_version"),
+                cipher_suite: zero_category("cipher_suite"),
+                cert_chain: zero_category("cert_chain"),
+                downgrade_posture: zero_category("downgrade_posture"),
+            },
+            hndl: HndlAssessment {
+                rating: HndlRating::None,
+                exposure_window_years: 0.0,
+                cert_expires_before_q_day: false,
+                notes: vec![],
+            },
+            findings: vec![],
+            cert_chain: Some(CertChainReport { entries: vec![], findings: vec![] }),
+            cipher_inventory: None,
+            downgrade: DowngradeResult::Rejected,
+            error: None,
+        }
+    }
+
+    pub fn stub_scan_report() -> ScanReport {
+        ScanReport {
+            schema_version: "1.0".into(),
+            scanned_at: "2026-01-01T00:00:00Z".into(),
+            compliance_mode: ComplianceMode::Nist,
+            targets: vec![stub_target_report(80)],
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
