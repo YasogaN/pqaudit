@@ -184,6 +184,8 @@ pub struct ScanReport {
     pub scanned_at: String,
     pub compliance_mode: cli::ComplianceMode,
     pub targets: Vec<TargetReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comparison: Option<output::compare::ComparisonReport>,
 }
 
 // ── Test helpers shared across modules ────────────────────────────────────────
@@ -243,6 +245,7 @@ pub mod tests_common {
             scanned_at: "2026-01-01T00:00:00Z".into(),
             compliance_mode: ComplianceMode::Nist,
             targets: vec![stub_target_report(80)],
+            comparison: None,
         }
     }
 
@@ -269,6 +272,7 @@ pub mod tests_common {
             scanned_at: "2026-01-01T00:00:00Z".into(),
             compliance_mode: ComplianceMode::Nist,
             targets: vec![target],
+            comparison: None,
         }
     }
 }

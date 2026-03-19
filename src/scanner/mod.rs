@@ -73,6 +73,7 @@ pub async fn scan(targets: Vec<String>, config: &ScanConfig) -> ScanReport {
         scanned_at: Utc::now().to_rfc3339(),
         compliance_mode: config.compliance.clone(),
         targets: results,
+        comparison: None,
     }
 }
 
