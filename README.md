@@ -61,7 +61,7 @@ Compliance mode: NIST IR 8547
 ### Integration
 
 - **CI/CD gate** — exits 1 when score falls below a configurable threshold
-- **GitHub Actions** — reference workflow for automated PQC auditing with SARIF upload
+- **GitHub Actions** — publishes findings to GitHub Code Scanning via SARIF on every push
 - **MCP server** — exposes `scan_endpoint`, `compare_endpoints`, and `get_cbom` tools for
   agent-driven workflows; disabled by default (opt in with `--features mcp` at build time to
   avoid pulling `rmcp` and `schemars` into the CLI binary)
@@ -78,7 +78,7 @@ linked with no runtime dependencies.
 
 ```sh
 # Linux (x86_64)
-curl -Lo pqaudit https://github.com/YasogaN/pqaudit/releases/latest/download/pqaudit-x86_64-unknown-linux-musl
+curl -Lo pqaudit https://github.com/YasogaN/pqaudit/releases/latest/download/pqaudit-linux-x86_64
 chmod +x pqaudit
 sudo mv pqaudit /usr/local/bin/
 ```
@@ -255,6 +255,59 @@ semantics and workflow examples.
 
 See [Compliance Modes](https://github.com/YasogaN/pqaudit/wiki/Compliance-Modes) for full
 timelines and algorithm tables.
+
+---
+
+## GitHub Action
+
+pqaudit is published to the [GitHub Marketplace](https://github.com/marketplace/actions/pqaudit-tls-scan).
+Drop the following into `.github/workflows/pqaudit.yml` to scan your production endpoint on
+every push and publish findings to Security → Code Scanning:
+
+```yaml
+name: PQC Audit
+on: push
+jobs:
+  pqc-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: YasogaN/pqaudit@v1
+        with:
+          targets: api.example.com
+```
+
+### Inputs
+
+| Input | Required | Default | Description |
+|---|---|---|---|
+| `targets` | yes | — | Space-separated list of hosts to scan (`host`, `host:port`, `smtp://host`) |
+| `compliance` | no | `nist` | Scoring framework: `nist`, `cnsa2`, or `fips` |
+| `fail-below` | no | `0` | Exit 1 if PQC score is below this threshold (0 disables the check) |
+| `upload-sarif` | no | `true` | Upload SARIF to GitHub Code Scanning (requires `security-events: write`) |
+
+### Outputs
+
+| Output | Description |
+|---|---|
+| `sarif-file` | Absolute path to the generated SARIF file (useful if `upload-sarif: false`) |
+
+### Advanced usage
+
+```yaml
+- uses: YasogaN/pqaudit@v1
+  with:
+    targets: api.example.com api2.example.com:8443
+    compliance: cnsa2
+    fail-below: 80
+    upload-sarif: false   # handle upload yourself
+
+- uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: ${{ steps.pqaudit.outputs.sarif-file }}
+    category: pqc-audit
+```
 
 ---
 

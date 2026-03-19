@@ -1,0 +1,63 @@
+name: pqaudit TLS Scan
+description: Scan TLS endpoints for post-quantum readiness and upload results to GitHub Code Scanning
+inputs:
+  targets:
+    description: Space-separated list of targets to scan
+    required: true
+  fail-below:
+    description: Exit code 1 if PQC score is below this threshold (1-100; 0 disables the check)
+    default: "0"
+  compliance:
+    description: Scoring framework (nist, cnsa2, fips)
+    default: nist
+  upload-sarif:
+    description: Upload SARIF results to GitHub Code Scanning (requires security-events:write)
+    default: "true"
+outputs:
+  sarif-file:
+    description: Absolute path to the generated SARIF file
+    value: ${{ steps.scan.outputs.sarif-file }}
+branding:
+  icon: shield
+  color: purple
+runs:
+  using: composite
+  steps:
+    - name: Download pqaudit
+      shell: bash
+      run: |
+        curl -sSfL \
+          https://github.com/YasogaN/pqaudit/releases/latest/download/pqaudit-linux-x86_64 \
+          -o "$RUNNER_TEMP/pqaudit"
+        chmod +x "$RUNNER_TEMP/pqaudit"
+
+    - name: Run scan
+      id: scan
+      shell: bash
+      env:
+        PQAUDIT_TARGETS: ${{ inputs.targets }}
+        PQAUDIT_COMPLIANCE: ${{ inputs.compliance }}
+        PQAUDIT_FAIL_BELOW: ${{ inputs.fail-below }}
+      run: |
+        SARIF_FILE="$RUNNER_TEMP/pqaudit-results.sarif"
+
+        fail_args=()
+        if [[ "$PQAUDIT_FAIL_BELOW" != "0" ]]; then
+          fail_args=(--fail-below "$PQAUDIT_FAIL_BELOW")
+        fi
+
+        # shellcheck disable=SC2086 — word-split is intentional for space-separated targets
+        "$RUNNER_TEMP/pqaudit" \
+          --compliance "$PQAUDIT_COMPLIANCE" \
+          --output sarif \
+          --output-file "$SARIF_FILE" \
+          "${fail_args[@]}" \
+          $PQAUDIT_TARGETS
+
+        echo "sarif-file=$SARIF_FILE" >> "$GITHUB_OUTPUT"
+
+    - name: Upload SARIF to GitHub Code Scanning
+      if: inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif-file }}

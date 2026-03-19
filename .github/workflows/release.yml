@@ -20,6 +20,7 @@ jobs:
 
   build:
     name: Build ${{ matrix.target }}
+    needs: test
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -106,10 +107,24 @@ jobs:
         with:
           files: artifacts/*
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
+
+      # Stable releases only: move the floating major version tag so that
+      # consumers pinned to @v1 (GitHub Marketplace) get this update.
+      - name: Update floating major version tag
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          MAJOR="${TAG%%.*}"
+          git tag -f "$MAJOR"
+          git push origin "$MAJOR" --force
 
   publish:
     name: Publish to crates.io
-    needs: [release, test]
+    needs: release
+    # Pre-releases (v1.0.0-beta.1, etc.) are not published to crates.io.
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

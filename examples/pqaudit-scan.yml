@@ -1,0 +1,17 @@
+# Drop this file into .github/workflows/ in any repo.
+# Set the `targets` input to your production endpoint(s).
+# Findings appear in Security → Code Scanning on every push.
+
+name: PQC Audit
+
+on: push
+
+jobs:
+  pqc-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: YasogaN/pqaudit@v1
+        with:
+          targets: api.example.com
