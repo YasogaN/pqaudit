@@ -9,6 +9,15 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  test:
+    name: Verify tests pass before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --no-default-features
+      - run: cargo test --features mcp
+
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -92,7 +101,7 @@ jobs:
 
   publish:
     name: Publish to crates.io
-    needs: release
+    needs: [release, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
