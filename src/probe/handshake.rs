@@ -109,8 +109,9 @@ fn parse_key_share_group(body: &[u8], extensions_offset: usize) -> Option<u16> {
             break;
         }
         // key_share extension type = 0x0033
-        if ext_type == 0x0033 && ext_len >= 4 {
-            // key_share in ServerHello: group(2) + key_exchange_len(2) + key_exchange
+        // ServerHello: group(2) + key_exchange_len(2) + key_exchange (ext_len >= 4)
+        // HelloRetryRequest: group(2) only (ext_len == 2)
+        if ext_type == 0x0033 && ext_len >= 2 {
             let group = u16::from_be_bytes([body[pos], body[pos + 1]]);
             return Some(group);
         }
@@ -165,10 +166,7 @@ pub fn build_client_hello(
 
     // Supported groups extension (0x000a)
     {
-        let groups_bytes: Vec<u8> = named_groups
-            .iter()
-            .flat_map(|g| g.to_be_bytes())
-            .collect();
+        let groups_bytes: Vec<u8> = named_groups.iter().flat_map(|g| g.to_be_bytes()).collect();
         let list_len = groups_bytes.len() as u16;
         let ext_len = list_len + 2; // +2 for the list_len field
         let mut ext = vec![0x00, 0x0a];
@@ -179,33 +177,42 @@ pub fn build_client_hello(
     }
 
     // Key share extension (0x0033)
-    // Use a 32-byte X25519 key share (all zeros — triggers rejection but allows response classification)
+    // Always use X25519 (0x001D) with the base point when X25519 is in named_groups.
+    // PQC hybrid groups need ~1184–1216 byte key shares that we don't generate;
+    // advertising them in supported_groups is enough to trigger an HRR from PQC-capable
+    // servers, which tells us the preferred group without needing a real PQC key share.
+    // If X25519 is not in the list (e.g. Kyber-draft-only probe), fall back to 32 zero bytes
+    // for the first group — callers accepting Option returns handle that gracefully.
     {
-        let group = named_groups.first().copied().unwrap_or(0x001D); // X25519 default
-        let key_len: u16 = 32;
-        let entry_len: u16 = 2 + 2 + key_len; // group + key_len + key
+        let (ks_group, ks_key): (u16, Vec<u8>) = if named_groups.contains(&0x001D) {
+            let mut key = vec![0u8; 32];
+            key[0] = 9; // X25519 base point u-coordinate (little-endian)
+            (0x001D, key)
+        } else {
+            let group = named_groups.first().copied().unwrap_or(0x001D);
+            (group, vec![0u8; 32])
+        };
+        let key_len = ks_key.len() as u16;
+        let entry_len: u16 = 2 + 2 + key_len; // group(2) + key_len(2) + key
         let list_len: u16 = entry_len;
         let ext_data_len: u16 = list_len + 2;
         let mut ext = vec![0x00, 0x33];
         ext.extend_from_slice(&ext_data_len.to_be_bytes());
         ext.extend_from_slice(&list_len.to_be_bytes());
-        ext.extend_from_slice(&group.to_be_bytes());
+        ext.extend_from_slice(&ks_group.to_be_bytes());
         ext.extend_from_slice(&key_len.to_be_bytes());
-        ext.extend(std::iter::repeat(0u8).take(key_len as usize));
+        ext.extend_from_slice(&ks_key);
         extensions.extend_from_slice(&ext);
     }
 
     // Build cipher suites
-    let suites_bytes: Vec<u8> = cipher_suites
-        .iter()
-        .flat_map(|s| s.to_be_bytes())
-        .collect();
+    let suites_bytes: Vec<u8> = cipher_suites.iter().flat_map(|s| s.to_be_bytes()).collect();
     let suites_len = suites_bytes.len() as u16;
 
     // Build ClientHello body
     let mut hello_body = Vec::new();
     hello_body.extend_from_slice(&max_version.to_be_bytes()); // version (legacy)
-    hello_body.extend(std::iter::repeat(0u8).take(32)); // random (32 zero bytes)
+    hello_body.extend(std::iter::repeat_n(0u8, 32)); // random (32 zero bytes)
     hello_body.push(0x00); // session_id length = 0
     hello_body.extend_from_slice(&suites_len.to_be_bytes());
     hello_body.extend_from_slice(&suites_bytes);
@@ -226,7 +233,9 @@ pub fn build_client_hello(
 
     // TLS record header: content type (0x16) + version (0x03 0x01) + length
     let mut record = vec![
-        0x16, 0x03, 0x01, // handshake, TLS 1.0 (for compat)
+        0x16,
+        0x03,
+        0x01, // handshake, TLS 1.0 (for compat)
         ((handshake.len() >> 8) & 0xFF) as u8,
         (handshake.len() & 0xFF) as u8,
     ];
@@ -236,11 +245,7 @@ pub fn build_client_hello(
 
 /// Send ClientHello over an existing TcpStream, read response, classify it.
 /// Accumulates bytes until a complete TLS record is received (handles TCP fragmentation).
-pub async fn probe_once(
-    stream: &mut TcpStream,
-    hello: &[u8],
-    timeout_ms: u64,
-) -> ServerResponse {
+pub async fn probe_once(stream: &mut TcpStream, hello: &[u8], timeout_ms: u64) -> ServerResponse {
     use tokio::time::{Duration, Instant};
     if stream.write_all(hello).await.is_err() {
         return ServerResponse::ConnectionClose;

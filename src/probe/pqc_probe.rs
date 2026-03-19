@@ -1,11 +1,11 @@
-use std::sync::Arc;
-use rustls::{ClientConfig, RootCertStore};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_rustls::TlsConnector;
-use crate::{PqcHandshakeResult, ProbeError, TlsVersion, CipherSuite};
 use crate::audit::tables::iana_groups::named_group_for_code_point;
 use crate::probe::handshake::{build_client_hello, parse_server_response, ServerResponse};
 use crate::probe::hrr::is_hrr;
+use crate::{CipherSuite, PqcHandshakeResult, ProbeError, TlsVersion};
+use rustls::{ClientConfig, RootCertStore};
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_rustls::TlsConnector;
 
 /// Configuration for a single probe operation (timeout + SNI override).
 /// Scanner-level settings (concurrency, full_scan) live in the scanner config.
@@ -57,15 +57,26 @@ async fn probe_raw_group(
 ) -> Result<(u16, bool), ProbeError> {
     let hello = build_client_hello(sni, DEFAULT_CIPHER_SUITES, DEFAULT_NAMED_GROUPS, 0x0304);
 
-    let mut stream = tokio::net::TcpStream::connect((host, port)).await
-        .map_err(|_| ProbeError::ConnectionRefused { host: host.into(), port })?;
+    let mut stream =
+        crate::probe::tcp_connect(host, port, timeout_ms)
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::TimedOut {
+                    ProbeError::Timeout { after_ms: timeout_ms }
+                } else {
+                    ProbeError::ConnectionRefused { host: host.into(), port }
+                }
+            })?;
 
-    stream.write_all(&hello).await
-        .map_err(|e| ProbeError::TlsHandshakeFailed { reason: e.to_string() })?;
+    stream
+        .write_all(&hello)
+        .await
+        .map_err(|e| ProbeError::TlsHandshakeFailed {
+            reason: e.to_string(),
+        })?;
 
     // Read response — handle TCP fragmentation by accumulating until a complete TLS record
-    let deadline = tokio::time::Instant::now()
-        + tokio::time::Duration::from_millis(timeout_ms);
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(timeout_ms);
     let mut buf = Vec::with_capacity(4096);
     loop {
         let need = if buf.len() >= 5 {
@@ -78,7 +89,9 @@ async fn probe_raw_group(
         }
         let remaining = deadline
             .checked_duration_since(tokio::time::Instant::now())
-            .ok_or_else(|| ProbeError::Timeout { after_ms: timeout_ms })?;
+            .ok_or(ProbeError::Timeout {
+                after_ms: timeout_ms,
+            })?;
         let mut chunk = [0u8; 4096];
         match tokio::time::timeout(remaining, stream.read(&mut chunk)).await {
             Ok(Ok(0)) => {
@@ -88,14 +101,20 @@ async fn probe_raw_group(
             }
             Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
             Ok(Err(e)) => {
-                return Err(ProbeError::TlsHandshakeFailed { reason: e.to_string() })
+                return Err(ProbeError::TlsHandshakeFailed {
+                    reason: e.to_string(),
+                })
             }
-            Err(_) => return Err(ProbeError::Timeout { after_ms: timeout_ms }),
+            Err(_) => {
+                return Err(ProbeError::Timeout {
+                    after_ms: timeout_ms,
+                })
+            }
         }
     }
 
-    let response = parse_server_response(&buf)
-        .map_err(|e| ProbeError::TlsHandshakeFailed { reason: e })?;
+    let response =
+        parse_server_response(&buf).map_err(|e| ProbeError::TlsHandshakeFailed { reason: e })?;
 
     match response {
         ServerResponse::ServerHello { selected_group, .. } => {
@@ -110,10 +129,13 @@ async fn probe_raw_group(
             Ok((group_code, hrr))
         }
         ServerResponse::HandshakeFailure => Err(ProbeError::TlsHandshakeFailed {
-            reason: "server rejected all PQC groups".into(),
+            reason: "server rejected all offered groups".into(),
         }),
-        _ => Err(ProbeError::TlsHandshakeFailed {
-            reason: "unexpected server response type".into(),
+        ServerResponse::ConnectionClose => Err(ProbeError::TlsHandshakeFailed {
+            reason: "server closed connection during handshake".into(),
+        }),
+        ServerResponse::Timeout => Err(ProbeError::Timeout {
+            after_ms: timeout_ms,
         }),
     }
 }
@@ -137,44 +159,61 @@ pub async fn pqc_probe(
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
 
-    let tls_config = ClientConfig::builder_with_provider(
-        rustls::crypto::aws_lc_rs::default_provider().into(),
-    )
-    .with_safe_default_protocol_versions()
-    .map_err(|e| ProbeError::TlsHandshakeFailed { reason: e.to_string() })?
-    .with_root_certificates(root_store)
-    .with_no_client_auth();
+    let tls_config =
+        ClientConfig::builder_with_provider(rustls::crypto::aws_lc_rs::default_provider().into())
+            .with_safe_default_protocol_versions()
+            .map_err(|e| ProbeError::TlsHandshakeFailed {
+                reason: e.to_string(),
+            })?
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
 
     let connector = TlsConnector::from(Arc::new(tls_config));
 
-    let stream = tokio::time::timeout(
-        tokio::time::Duration::from_millis(timeout_ms),
-        tokio::net::TcpStream::connect((host, port)),
-    )
-    .await
-    .map_err(|_| ProbeError::Timeout { after_ms: timeout_ms })?
-    .map_err(|_| ProbeError::ConnectionRefused { host: host.into(), port })?;
+    let stream =
+        crate::probe::tcp_connect(host, port, timeout_ms)
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::TimedOut {
+                    ProbeError::Timeout { after_ms: timeout_ms }
+                } else {
+                    ProbeError::ConnectionRefused { host: host.into(), port }
+                }
+            })?;
 
-    let server_name = rustls::pki_types::ServerName::try_from(sni.to_string())
-        .map_err(|e| ProbeError::TlsHandshakeFailed { reason: e.to_string() })?;
+    let server_name = rustls::pki_types::ServerName::try_from(sni.to_string()).map_err(|e| {
+        ProbeError::TlsHandshakeFailed {
+            reason: e.to_string(),
+        }
+    })?;
 
     let tls_stream = tokio::time::timeout(
         tokio::time::Duration::from_millis(timeout_ms),
         connector.connect(server_name, stream),
     )
     .await
-    .map_err(|_| ProbeError::Timeout { after_ms: timeout_ms })?
-    .map_err(|e| ProbeError::TlsHandshakeFailed { reason: e.to_string() })?;
+    .map_err(|_| ProbeError::Timeout {
+        after_ms: timeout_ms,
+    })?
+    .map_err(|e| ProbeError::TlsHandshakeFailed {
+        reason: e.to_string(),
+    })?;
 
     let (_, session) = tls_stream.get_ref();
 
     // Extract cipher suite
-    let suite = session
-        .negotiated_cipher_suite()
-        .ok_or_else(|| ProbeError::TlsHandshakeFailed { reason: "no cipher suite negotiated".into() })?;
+    let suite =
+        session
+            .negotiated_cipher_suite()
+            .ok_or_else(|| ProbeError::TlsHandshakeFailed {
+                reason: "no cipher suite negotiated".into(),
+            })?;
     let suite_id = u16::from(suite.suite());
     let suite_name = format!("{:?}", suite.suite());
-    let negotiated_suite = CipherSuite { id: suite_id, name: suite_name };
+    let negotiated_suite = CipherSuite {
+        id: suite_id,
+        name: suite_name,
+    };
 
     // Extract TLS version
     let negotiated_version = match session.protocol_version() {

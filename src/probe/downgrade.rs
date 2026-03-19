@@ -1,6 +1,6 @@
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use crate::{DowngradeResult, TlsVersion};
 use crate::probe::handshake::{build_client_hello, parse_server_response, ServerResponse};
+use crate::{DowngradeResult, TlsVersion};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 // Classical-only groups (no PQC)
 const CLASSICAL_GROUPS: &[u16] = &[0x001D, 0x0017, 0x0018];
@@ -38,8 +38,9 @@ pub fn classify_downgrade(response: &ServerResponse) -> DowngradeResult {
 /// A ServerHello means the server accepted a downgrade to TLS 1.2.
 pub async fn probe_downgrade(host: &str, port: u16, timeout_ms: u64) -> DowngradeResult {
     let hello = build_client_hello(host, CLASSICAL_SUITES, CLASSICAL_GROUPS, 0x0303);
-    let mut stream = match tokio::net::TcpStream::connect((host, port)).await {
+    let mut stream = match crate::probe::tcp_connect(host, port, timeout_ms).await {
         Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => return DowngradeResult::Timeout,
         Err(_) => return DowngradeResult::Rejected,
     };
     if stream.write_all(&hello).await.is_err() {
@@ -83,22 +84,34 @@ mod tests {
             selected_group: None,
             tls_version: 0x0303,
         };
-        assert!(matches!(classify_downgrade(&r), DowngradeResult::Accepted { .. }));
+        assert!(matches!(
+            classify_downgrade(&r),
+            DowngradeResult::Accepted { .. }
+        ));
     }
 
     #[test]
     fn handshake_failure_is_downgrade_rejected() {
-        assert_eq!(classify_downgrade(&ServerResponse::HandshakeFailure), DowngradeResult::Rejected);
+        assert_eq!(
+            classify_downgrade(&ServerResponse::HandshakeFailure),
+            DowngradeResult::Rejected
+        );
     }
 
     #[test]
     fn connection_close_is_downgrade_rejected() {
-        assert_eq!(classify_downgrade(&ServerResponse::ConnectionClose), DowngradeResult::Rejected);
+        assert_eq!(
+            classify_downgrade(&ServerResponse::ConnectionClose),
+            DowngradeResult::Rejected
+        );
     }
 
     #[test]
     fn timeout_is_downgrade_timeout() {
-        assert_eq!(classify_downgrade(&ServerResponse::Timeout), DowngradeResult::Timeout);
+        assert_eq!(
+            classify_downgrade(&ServerResponse::Timeout),
+            DowngradeResult::Timeout
+        );
     }
 
     #[test]

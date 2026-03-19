@@ -1,5 +1,5 @@
-use crate::{CipherInventory, CipherSuite};
 use crate::probe::handshake::{build_client_hello, parse_server_response, ServerResponse};
+use crate::{CipherInventory, CipherSuite};
 
 /// Map a cipher suite ID to its IANA name, falling back to hex if unknown.
 fn iana_suite_name(id: u16) -> String {
@@ -41,18 +41,12 @@ const TLS13_SUITES: &[u16] = &[
 // Common TLS 1.2 suite IDs to probe (IANA registry)
 const TLS12_SUITES_TO_PROBE: &[u16] = &[
     // AES-256-GCM
-    0xC02C, 0xC030,
-    // AES-128-GCM
-    0xC02B, 0xC02F,
-    // ChaCha20 (TLS 1.2 variants)
-    0xCCA8, 0xCCA9,
-    // AES-256-CBC (legacy)
-    0xC024, 0xC028,
-    // AES-128-CBC (legacy)
-    0xC023, 0xC027,
-    // RSA key exchange variants
-    0x003C, 0x003D, 0x0035, 0x002F,
-    // 3DES (very legacy)
+    0xC02C, 0xC030, // AES-128-GCM
+    0xC02B, 0xC02F, // ChaCha20 (TLS 1.2 variants)
+    0xCCA8, 0xCCA9, // AES-256-CBC (legacy)
+    0xC024, 0xC028, // AES-128-CBC (legacy)
+    0xC023, 0xC027, // RSA key exchange variants
+    0x003C, 0x003D, 0x0035, 0x002F, // 3DES (very legacy)
     0x000A,
 ];
 
@@ -74,7 +68,7 @@ async fn probe_with_suites(
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let hello = build_client_hello(host, suites, &[0x001D, 0x0017], max_version);
-    let mut stream = match tokio::net::TcpStream::connect((host, port)).await {
+    let mut stream = match crate::probe::tcp_connect(host, port, timeout_ms).await {
         Ok(s) => s,
         Err(_) => return None,
     };
@@ -102,7 +96,9 @@ async fn probe_with_suites(
             Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
         }
     }
-    parse_server_response(&buf).ok().and_then(|r| extract_selected_suite(&r))
+    parse_server_response(&buf)
+        .ok()
+        .and_then(|r| extract_selected_suite(&r))
 }
 
 async fn run_tls13_pass(host: &str, port: u16, timeout_ms: u64) -> Vec<CipherSuite> {
@@ -116,7 +112,10 @@ async fn run_tls13_pass(host: &str, port: u16, timeout_ms: u64) -> Vec<CipherSui
             // Only accept IDs that are genuinely TLS 1.3 suites — prevents contamination
             // if the server downgrades to TLS 1.2 because we advertise both versions.
             Some(id) if TLS13_SUITES.contains(&id) => {
-                found.push(CipherSuite { id, name: iana_suite_name(id) });
+                found.push(CipherSuite {
+                    id,
+                    name: iana_suite_name(id),
+                });
                 remaining.retain(|&s| s != id);
             }
             _ => break,
@@ -134,7 +133,10 @@ async fn run_tls12_pass(host: &str, port: u16, timeout_ms: u64) -> Vec<CipherSui
         let batch: Vec<u16> = remaining.iter().copied().take(64).collect();
         match probe_with_suites(host, port, &batch, timeout_ms, 0x0303).await {
             Some(id) => {
-                found.push(CipherSuite { id, name: iana_suite_name(id) });
+                found.push(CipherSuite {
+                    id,
+                    name: iana_suite_name(id),
+                });
                 remaining.retain(|&s| s != id);
             }
             None => {
@@ -153,7 +155,7 @@ async fn probe_kyber_draft(host: &str, port: u16, timeout_ms: u64) -> bool {
 
     // Offer only the Kyber draft group to test acceptance
     let hello = build_client_hello(host, &[0x1301, 0x1302, 0x1303], &[0x6399], 0x0304);
-    let mut stream = match tokio::net::TcpStream::connect((host, port)).await {
+    let mut stream = match crate::probe::tcp_connect(host, port, timeout_ms).await {
         Ok(s) => s,
         Err(_) => return false,
     };
@@ -192,7 +194,11 @@ pub async fn enumerate_ciphers(host: &str, port: u16, timeout_ms: u64) -> Cipher
     let tls13_suites = run_tls13_pass(host, port, timeout_ms).await;
     let tls12_suites = run_tls12_pass(host, port, timeout_ms).await;
     let kyber_draft_accepted = probe_kyber_draft(host, port, timeout_ms).await;
-    CipherInventory { tls13_suites, tls12_suites, kyber_draft_accepted }
+    CipherInventory {
+        tls13_suites,
+        tls12_suites,
+        kyber_draft_accepted,
+    }
 }
 
 #[cfg(test)]
@@ -211,7 +217,10 @@ mod tests {
 
     #[test]
     fn extract_selected_suite_from_failure_is_none() {
-        assert_eq!(extract_selected_suite(&ServerResponse::HandshakeFailure), None);
+        assert_eq!(
+            extract_selected_suite(&ServerResponse::HandshakeFailure),
+            None
+        );
     }
 
     #[test]
@@ -223,7 +232,10 @@ mod tests {
     fn iana_suite_name_known_id() {
         assert_eq!(iana_suite_name(0x1301), "TLS_AES_128_GCM_SHA256");
         assert_eq!(iana_suite_name(0x1302), "TLS_AES_256_GCM_SHA384");
-        assert_eq!(iana_suite_name(0xC02F), "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256");
+        assert_eq!(
+            iana_suite_name(0xC02F),
+            "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+        );
     }
 
     #[test]
