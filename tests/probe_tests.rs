@@ -5,8 +5,13 @@ use pqaudit::probe::handshake::{parse_server_response, ServerResponse};
 async fn cloudflare_negotiates_pqc() {
     use pqaudit::probe::pqc_probe::{pqc_probe, ScanConfig};
     let config = ScanConfig::default();
-    let result = pqc_probe("cloudflare.com", 443, None, &config).await.unwrap();
-    assert!(result.negotiated_group.is_pqc, "cloudflare should negotiate PQC");
+    let result = pqc_probe("cloudflare.com", 443, None, &config)
+        .await
+        .unwrap();
+    assert!(
+        result.negotiated_group.is_pqc,
+        "cloudflare should negotiate PQC"
+    );
     assert_eq!(result.negotiated_version, pqaudit::TlsVersion::Tls13);
 }
 
@@ -23,7 +28,14 @@ fn parses_server_hello_from_fixture() {
     let response = parse_server_response(bytes).unwrap();
     // Fixture contains key_share extension with X25519MLKEM768 (0x11EC)
     assert!(
-        matches!(response, ServerResponse::ServerHello { selected_group: Some(0x11EC), .. }),
-        "expected selected_group = Some(0x11EC), got {:?}", response
+        matches!(
+            response,
+            ServerResponse::ServerHello {
+                selected_group: Some(0x11EC),
+                ..
+            }
+        ),
+        "expected selected_group = Some(0x11EC), got {:?}",
+        response
     );
 }

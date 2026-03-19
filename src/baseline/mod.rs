@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use crate::{ScanReport, TargetReport};
+use std::collections::HashSet;
 
 #[derive(Debug)]
 pub enum BaselineDiffError {
@@ -50,7 +50,9 @@ pub fn diff_reports(
         .targets
         .iter()
         .filter_map(|cur| {
-            baseline_map.get(cur.target.as_str()).map(|base| diff_target(base, cur))
+            baseline_map
+                .get(cur.target.as_str())
+                .map(|base| diff_target(base, cur))
         })
         .collect();
 
@@ -73,15 +75,9 @@ pub fn diff_target(baseline: &TargetReport, current: &TargetReport) -> TargetDif
         .map(|f| f.sarif_rule_id().to_string())
         .collect();
 
-    let resolved_findings: Vec<String> = baseline_ids
-        .difference(&current_ids)
-        .cloned()
-        .collect();
+    let resolved_findings: Vec<String> = baseline_ids.difference(&current_ids).cloned().collect();
 
-    let new_findings: Vec<String> = current_ids
-        .difference(&baseline_ids)
-        .cloned()
-        .collect();
+    let new_findings: Vec<String> = current_ids.difference(&baseline_ids).cloned().collect();
 
     TargetDiff {
         target: current.target.clone(),
@@ -94,8 +90,8 @@ pub fn diff_target(baseline: &TargetReport, current: &TargetReport) -> TargetDif
 
 /// Load a ScanReport from a JSON baseline file.
 pub fn load_baseline(path: &std::path::Path) -> Result<ScanReport, BaselineDiffError> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| BaselineDiffError::IoError(e.to_string()))?;
+    let content =
+        std::fs::read_to_string(path).map_err(|e| BaselineDiffError::IoError(e.to_string()))?;
     Ok(serde_json::from_str(&content)?)
 }
 
@@ -127,7 +123,10 @@ mod tests {
         let mut old = stub_scan_report();
         old.schema_version = "0.9".into();
         let result = diff_reports(&old, &stub_scan_report());
-        assert!(matches!(result, Err(BaselineDiffError::SchemaMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(BaselineDiffError::SchemaMismatch { .. })
+        ));
     }
 
     #[test]

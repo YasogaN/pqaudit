@@ -1,15 +1,12 @@
 use clap::Parser;
 use pqaudit::{
-    ScanReport,
     cli::{Cli, OutputFormat},
     output::{
-        cbom::render_cbom,
-        compare::build_comparison,
-        human::render_human,
-        json::render_json,
+        cbom::render_cbom, compare::build_comparison, human::render_human, json::render_json,
         sarif::render_sarif,
     },
     scanner::{scan, ScanConfig},
+    ScanReport,
 };
 
 #[tokio::main]
@@ -34,7 +31,12 @@ async fn main() {
     if let Some(path) = &cli.targets_file {
         match std::fs::read_to_string(path) {
             Ok(content) => {
-                targets.extend(content.lines().filter(|l| !l.trim().is_empty()).map(str::to_string));
+                targets.extend(
+                    content
+                        .lines()
+                        .filter(|l| !l.trim().is_empty())
+                        .map(str::to_string),
+                );
             }
             Err(e) => {
                 eprintln!("Error reading targets file {}: {e}", path.display());
@@ -76,7 +78,11 @@ async fn main() {
                 }
             }
             Err(e) => {
-                eprintln!("Could not load baseline {}: {:?}", baseline_path.display(), e);
+                eprintln!(
+                    "Could not load baseline {}: {:?}",
+                    baseline_path.display(),
+                    e
+                );
             }
         }
     }
@@ -88,10 +94,10 @@ async fn main() {
 
     // Render output
     let output_str = match cli.output {
-        OutputFormat::Json   => render_json(&report),
-        OutputFormat::Sarif  => render_sarif(&report),
-        OutputFormat::Cbom   => render_cbom(&report),
-        OutputFormat::Human  => render_human(&report, cli.compare),
+        OutputFormat::Json => render_json(&report),
+        OutputFormat::Sarif => render_sarif(&report),
+        OutputFormat::Cbom => render_cbom(&report),
+        OutputFormat::Human => render_human(&report, cli.compare),
     };
 
     // Write to file or stdout
@@ -139,21 +145,23 @@ pub fn determine_exit_code(report: &ScanReport, cli: &Cli) -> i32 {
 mod tests {
     use super::*;
     use pqaudit::{
-        CipherInventory, CipherSuite, DowngradeResult, ScanReport, TargetReport,
         audit::{
             cert_chain::CertChainReport,
             hndl::{HndlAssessment, HndlRating},
             scoring::model::{CategoryScore, ScoringResult},
         },
         cli::ComplianceMode,
+        CipherInventory, CipherSuite, DowngradeResult, ScanReport, TargetReport,
     };
 
     fn stub_cli_with_fail_below(threshold: u8) -> Cli {
         Cli::try_parse_from([
             "pqaudit",
-            "--fail-below", &threshold.to_string(),
+            "--fail-below",
+            &threshold.to_string(),
             "example.com",
-        ]).unwrap()
+        ])
+        .unwrap()
     }
 
     fn stub_cli_no_threshold() -> Cli {
@@ -161,7 +169,12 @@ mod tests {
     }
 
     fn zero_cat(name: &str) -> CategoryScore {
-        CategoryScore { name: name.into(), points: 0, max_points: 0, notes: vec![] }
+        CategoryScore {
+            name: name.into(),
+            points: 0,
+            max_points: 0,
+            notes: vec![],
+        }
     }
 
     fn stub_target(score: u8, error: Option<String>) -> TargetReport {
@@ -183,9 +196,15 @@ mod tests {
                 notes: vec![],
             },
             findings: vec![],
-            cert_chain: Some(CertChainReport { entries: vec![], findings: vec![] }),
+            cert_chain: Some(CertChainReport {
+                entries: vec![],
+                findings: vec![],
+            }),
             cipher_inventory: Some(CipherInventory {
-                tls13_suites: vec![CipherSuite { id: 0x1302, name: "TLS_AES_256_GCM_SHA384".into() }],
+                tls13_suites: vec![CipherSuite {
+                    id: 0x1302,
+                    name: "TLS_AES_256_GCM_SHA384".into(),
+                }],
                 tls12_suites: vec![],
                 kyber_draft_accepted: false,
             }),

@@ -1,11 +1,11 @@
 pub mod audit;
+pub mod baseline;
+pub mod cli;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 pub mod output;
 pub mod probe;
 pub mod scanner;
-pub mod baseline;
-#[cfg(feature = "mcp")]
-pub mod mcp;
-pub mod cli;
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -149,7 +149,10 @@ pub enum ProbeError {
     #[error("timeout after {after_ms}ms")]
     Timeout { after_ms: u64 },
     #[error("STARTTLS upgrade failed for {protocol:?}: {reason}")]
-    StarttlsUpgradeFailed { protocol: StarttlsProtocol, reason: String },
+    StarttlsUpgradeFailed {
+        protocol: StarttlsProtocol,
+        reason: String,
+    },
     #[error("certificate parse error: {reason}")]
     CertificateParseError { reason: String },
 }
@@ -191,9 +194,6 @@ pub struct ScanReport {
 // ── Test helpers shared across modules ────────────────────────────────────────
 #[cfg(test)]
 pub mod tests_common {
-    use crate::{
-        CipherInventory, DowngradeResult, ScanReport, TargetReport, TlsVersion,
-    };
     use crate::audit::{
         cert_chain::CertChainReport,
         findings::Finding,
@@ -201,9 +201,15 @@ pub mod tests_common {
         scoring::model::{CategoryScore, ScoringResult},
     };
     use crate::cli::ComplianceMode;
+    use crate::{CipherInventory, DowngradeResult, ScanReport, TargetReport, TlsVersion};
 
     fn zero_category(name: &str) -> CategoryScore {
-        CategoryScore { name: name.into(), points: 0, max_points: 0, notes: vec![] }
+        CategoryScore {
+            name: name.into(),
+            points: 0,
+            max_points: 0,
+            notes: vec![],
+        }
     }
 
     pub fn stub_target_report(score: u8) -> TargetReport {
@@ -226,11 +232,15 @@ pub mod tests_common {
                 notes: vec![],
             },
             findings: vec![],
-            cert_chain: Some(CertChainReport { entries: vec![], findings: vec![] }),
+            cert_chain: Some(CertChainReport {
+                entries: vec![],
+                findings: vec![],
+            }),
             cipher_inventory: Some(CipherInventory {
-                tls13_suites: vec![
-                    CipherSuite { id: 0x1302, name: "TLS_AES_256_GCM_SHA384".into() },
-                ],
+                tls13_suites: vec![CipherSuite {
+                    id: 0x1302,
+                    name: "TLS_AES_256_GCM_SHA384".into(),
+                }],
                 tls12_suites: vec![],
                 kyber_draft_accepted: false,
             }),
@@ -258,7 +268,11 @@ pub mod tests_common {
         target.findings = vec![
             Finding {
                 kind: FindingKind::ClassicalKeyExchangeOnly {
-                    group: NamedGroup { code_point: 0x001D, name: "x25519".into(), is_pqc: false },
+                    group: NamedGroup {
+                        code_point: 0x001D,
+                        name: "x25519".into(),
+                        is_pqc: false,
+                    },
                 },
                 severity: Severity::Error,
             },
