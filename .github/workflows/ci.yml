@@ -36,6 +36,8 @@ jobs:
       - run: cargo test --features mcp
 
   lint:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +49,8 @@ jobs:
       - run: cargo clippy --features mcp -- -D warnings
 
   static-binary:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +64,8 @@ jobs:
       - run: ldd target/x86_64-unknown-linux-musl/release/pqaudit | grep -E "not a dynamic|statically linked" || (ldd target/x86_64-unknown-linux-musl/release/pqaudit && exit 1)
 
   cross-check:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
