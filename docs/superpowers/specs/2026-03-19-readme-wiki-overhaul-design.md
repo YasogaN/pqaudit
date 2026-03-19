@@ -247,7 +247,7 @@ Read `src/audit/remediation.rs` for all config snippets (nginx, Caddy, OpenSSL, 
 - Per-protocol handshake walk-through:
   - SMTP: read `220` banner → send `EHLO pqaudit` → read EHLO response → send `STARTTLS` → read `220 Ready`
   - IMAP: read `* OK` greeting → send `A001 STARTTLS` → read `A001 OK` (no CAPABILITY step)
-  - POP3: read `+OK` banner → send `STLS` → read `+OK`
+  - POP3: read `+OK` banner → send `STLS` → read `+OK` (no CAPA step)
 - **`ldap://` STARTTLS is not implemented** (`src/probe/starttls.rs` returns `StarttlsUpgradeFailed`): document as a known limitation; direct users to use `ldaps://` on port 636 instead
 - Port override: append `:PORT` to override the default, e.g. `smtp://mail.example.com:587`
 - `smtp://` vs `smtps://`: STARTTLS upgrade on a plain-text connection vs. direct TLS — use `smtp://` for port 25/587, `smtps://` for port 465
