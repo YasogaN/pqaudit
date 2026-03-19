@@ -238,6 +238,32 @@ pub mod tests_common {
             targets: vec![stub_target_report(80)],
         }
     }
+
+    /// Returns a ScanReport with one target that has a ClassicalKeyExchangeOnly finding.
+    pub fn stub_scan_report_with_all_findings() -> ScanReport {
+        use crate::audit::findings::{Finding, FindingKind, Severity};
+        use crate::NamedGroup;
+
+        let mut target = stub_target_report(30);
+        target.findings = vec![
+            Finding {
+                kind: FindingKind::ClassicalKeyExchangeOnly {
+                    group: NamedGroup { code_point: 0x001D, name: "x25519".into(), is_pqc: false },
+                },
+                severity: Severity::Error,
+            },
+            Finding {
+                kind: FindingKind::DowngradeAccepted,
+                severity: Severity::Warning,
+            },
+        ];
+        ScanReport {
+            schema_version: "1.0".into(),
+            scanned_at: "2026-01-01T00:00:00Z".into(),
+            compliance_mode: ComplianceMode::Nist,
+            targets: vec![target],
+        }
+    }
 }
 
 #[cfg(test)]
