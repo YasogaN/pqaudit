@@ -241,7 +241,7 @@ pub async fn probe_once(
     hello: &[u8],
     timeout_ms: u64,
 ) -> ServerResponse {
-    use tokio::time::{timeout, Duration, Instant};
+    use tokio::time::{Duration, Instant};
     if stream.write_all(hello).await.is_err() {
         return ServerResponse::ConnectionClose;
     }
