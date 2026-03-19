@@ -57,7 +57,7 @@ jobs:
       - run: |
           RUSTFLAGS="-C target-feature=+crt-static" \
             cargo build --release --target x86_64-unknown-linux-musl
-      - run: ldd target/x86_64-unknown-linux-musl/release/pqaudit | grep "not a dynamic" || (ldd target/x86_64-unknown-linux-musl/release/pqaudit && exit 1)
+      - run: ldd target/x86_64-unknown-linux-musl/release/pqaudit | grep -E "not a dynamic|statically linked" || (ldd target/x86_64-unknown-linux-musl/release/pqaudit && exit 1)
 
   cross-check:
     runs-on: ubuntu-latest
@@ -66,4 +66,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-unknown-linux-musl
-      - run: cargo check --target aarch64-unknown-linux-musl
+      - uses: taiki-e/install-action@cross
+      - run: cross check --target aarch64-unknown-linux-musl
