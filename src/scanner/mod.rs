@@ -1,9 +1,6 @@
-use futures::StreamExt;
 use chrono::Utc;
+use futures::StreamExt;
 
-use crate::{
-    DowngradeResult, ProbeResults, ScanReport, TargetReport, TlsVersion,
-};
 use crate::audit::{
     cert_chain::audit_chain,
     compliance::compliance_pair,
@@ -14,9 +11,10 @@ use crate::cli::{Cli, ComplianceMode};
 use crate::probe::{
     cipher_enum::enumerate_ciphers,
     downgrade::probe_downgrade,
-    pqc_probe::{ProbeConfig, pqc_probe},
+    pqc_probe::{pqc_probe, ProbeConfig},
     starttls::parse_scheme,
 };
+use crate::{DowngradeResult, ProbeResults, ScanReport, TargetReport, TlsVersion};
 
 /// Top-level scanner configuration derived from the CLI arguments.
 #[derive(Debug, Clone)]
@@ -85,7 +83,10 @@ async fn scan_single(target: String, config: &ScanConfig) -> TargetReport {
     let sni = config.sni_override.as_deref().unwrap_or(&host).to_string();
     let timeout_ms = config.timeout_ms;
 
-    let probe_cfg = ProbeConfig { timeout_ms, sni_override: config.sni_override.clone() };
+    let probe_cfg = ProbeConfig {
+        timeout_ms,
+        sni_override: config.sni_override.clone(),
+    };
 
     // Run PQC probe and downgrade probe concurrently.
     let (pqc_result, downgrade) = tokio::join!(
@@ -192,13 +193,26 @@ fn generate_findings(
         // Key exchange findings
         if group.code_point == 0x6399 {
             let kind = FindingKind::DeprecatedPqcDraftCodepoint { code_point: 0x6399 };
-            findings.push(Finding { severity: model.severity(&kind), kind });
+            findings.push(Finding {
+                severity: model.severity(&kind),
+                kind,
+            });
         } else if !group.is_pqc {
-            let kind = FindingKind::ClassicalKeyExchangeOnly { group: group.clone() };
-            findings.push(Finding { severity: model.severity(&kind), kind });
+            let kind = FindingKind::ClassicalKeyExchangeOnly {
+                group: group.clone(),
+            };
+            findings.push(Finding {
+                severity: model.severity(&kind),
+                kind,
+            });
         } else if pqc.hrr_required {
-            let kind = FindingKind::HybridKeyExchangeHrrRequired { group: group.clone() };
-            findings.push(Finding { severity: model.severity(&kind), kind });
+            let kind = FindingKind::HybridKeyExchangeHrrRequired {
+                group: group.clone(),
+            };
+            findings.push(Finding {
+                severity: model.severity(&kind),
+                kind,
+            });
         }
 
         // TLS version
@@ -206,15 +220,23 @@ fn generate_findings(
             let kind = FindingKind::TlsVersionInsufficient {
                 max_version: pqc.negotiated_version.clone(),
             };
-            findings.push(Finding { severity: model.severity(&kind), kind });
+            findings.push(Finding {
+                severity: model.severity(&kind),
+                kind,
+            });
         }
 
         // Weak cipher suites from inventory
         if let Some(inv) = &probe.cipher_inventory {
             for suite in inv.tls12_suites.iter().chain(inv.tls13_suites.iter()) {
                 if is_weak_cipher(suite.id) {
-                    let kind = FindingKind::WeakSymmetricCipher { suite: suite.clone() };
-                    findings.push(Finding { severity: model.severity(&kind), kind });
+                    let kind = FindingKind::WeakSymmetricCipher {
+                        suite: suite.clone(),
+                    };
+                    findings.push(Finding {
+                        severity: model.severity(&kind),
+                        kind,
+                    });
                 }
             }
         }
@@ -231,7 +253,10 @@ fn generate_findings(
     // Downgrade findings
     if matches!(probe.downgrade, DowngradeResult::Accepted { .. }) {
         let kind = FindingKind::DowngradeAccepted;
-        findings.push(Finding { severity: model.severity(&kind), kind });
+        findings.push(Finding {
+            severity: model.severity(&kind),
+            kind,
+        });
     }
 
     findings
@@ -242,8 +267,9 @@ fn is_weak_cipher(id: u16) -> bool {
     matches!(
         id,
         0x000A        // TLS_RSA_WITH_3DES_EDE_CBC_SHA
-        | 0x0000..=0x0003  // NULL / export ciphers
-        | 0x0004 | 0x0005  // RC4-MD5 / RC4-SHA
+        | 0x0000
+            ..=0x0003  // NULL / export ciphers
+        | 0x0004 | 0x0005 // RC4-MD5 / RC4-SHA
     )
 }
 
@@ -261,8 +287,8 @@ impl UtcYearExt for chrono::DateTime<chrono::Utc> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{NamedGroup, PqcHandshakeResult, TlsVersion, CipherSuite};
     use crate::audit::compliance::compliance_pair;
+    use crate::{CipherSuite, NamedGroup, PqcHandshakeResult, TlsVersion};
 
     fn make_probe(group_is_pqc: bool, hrr: bool, downgrade: DowngradeResult) -> ProbeResults {
         ProbeResults {
@@ -270,10 +296,18 @@ mod tests {
             port: 443,
             pqc_handshake: Ok(PqcHandshakeResult {
                 negotiated_version: TlsVersion::Tls13,
-                negotiated_suite: CipherSuite { id: 0x1302, name: "TLS_AES_256_GCM_SHA384".into() },
+                negotiated_suite: CipherSuite {
+                    id: 0x1302,
+                    name: "TLS_AES_256_GCM_SHA384".into(),
+                },
                 negotiated_group: NamedGroup {
                     code_point: if group_is_pqc { 0x11EC } else { 0x001D },
-                    name: if group_is_pqc { "X25519MLKEM768" } else { "x25519" }.into(),
+                    name: if group_is_pqc {
+                        "X25519MLKEM768"
+                    } else {
+                        "x25519"
+                    }
+                    .into(),
                     is_pqc: group_is_pqc,
                 },
                 hrr_required: hrr,
@@ -288,10 +322,15 @@ mod tests {
     fn classical_group_generates_finding() {
         let probe = make_probe(false, false, DowngradeResult::Rejected);
         let (_table, model) = compliance_pair(ComplianceMode::Nist);
-        let empty_chain = crate::audit::cert_chain::CertChainReport { entries: vec![], findings: vec![] };
+        let empty_chain = crate::audit::cert_chain::CertChainReport {
+            entries: vec![],
+            findings: vec![],
+        };
         let findings = generate_findings(&probe, &empty_chain, model.as_ref());
         assert!(
-            findings.iter().any(|f| matches!(f.kind, FindingKind::ClassicalKeyExchangeOnly { .. })),
+            findings
+                .iter()
+                .any(|f| matches!(f.kind, FindingKind::ClassicalKeyExchangeOnly { .. })),
             "expected ClassicalKeyExchangeOnly finding"
         );
     }
@@ -300,13 +339,16 @@ mod tests {
     fn pqc_group_no_hrr_generates_no_key_exchange_finding() {
         let probe = make_probe(true, false, DowngradeResult::Rejected);
         let (_table, model) = compliance_pair(ComplianceMode::Nist);
-        let empty_chain = crate::audit::cert_chain::CertChainReport { entries: vec![], findings: vec![] };
+        let empty_chain = crate::audit::cert_chain::CertChainReport {
+            entries: vec![],
+            findings: vec![],
+        };
         let findings = generate_findings(&probe, &empty_chain, model.as_ref());
         assert!(
             !findings.iter().any(|f| matches!(
                 f.kind,
                 FindingKind::ClassicalKeyExchangeOnly { .. }
-                | FindingKind::HybridKeyExchangeHrrRequired { .. }
+                    | FindingKind::HybridKeyExchangeHrrRequired { .. }
             )),
             "no key-exchange finding expected for clean PQC"
         );
@@ -316,24 +358,38 @@ mod tests {
     fn hrr_generates_finding() {
         let probe = make_probe(true, true, DowngradeResult::Rejected);
         let (_table, model) = compliance_pair(ComplianceMode::Nist);
-        let empty_chain = crate::audit::cert_chain::CertChainReport { entries: vec![], findings: vec![] };
+        let empty_chain = crate::audit::cert_chain::CertChainReport {
+            entries: vec![],
+            findings: vec![],
+        };
         let findings = generate_findings(&probe, &empty_chain, model.as_ref());
         assert!(
-            findings.iter().any(|f| matches!(f.kind, FindingKind::HybridKeyExchangeHrrRequired { .. })),
+            findings
+                .iter()
+                .any(|f| matches!(f.kind, FindingKind::HybridKeyExchangeHrrRequired { .. })),
             "expected HybridKeyExchangeHrrRequired finding"
         );
     }
 
     #[test]
     fn downgrade_accepted_generates_finding() {
-        let probe = make_probe(true, false, DowngradeResult::Accepted {
-            negotiated_version: TlsVersion::Tls12,
-        });
+        let probe = make_probe(
+            true,
+            false,
+            DowngradeResult::Accepted {
+                negotiated_version: TlsVersion::Tls12,
+            },
+        );
         let (_table, model) = compliance_pair(ComplianceMode::Nist);
-        let empty_chain = crate::audit::cert_chain::CertChainReport { entries: vec![], findings: vec![] };
+        let empty_chain = crate::audit::cert_chain::CertChainReport {
+            entries: vec![],
+            findings: vec![],
+        };
         let findings = generate_findings(&probe, &empty_chain, model.as_ref());
         assert!(
-            findings.iter().any(|f| matches!(f.kind, FindingKind::DowngradeAccepted)),
+            findings
+                .iter()
+                .any(|f| matches!(f.kind, FindingKind::DowngradeAccepted)),
             "expected DowngradeAccepted finding"
         );
     }

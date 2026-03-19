@@ -1,5 +1,5 @@
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use crate::{ProbeError, StarttlsProtocol};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 /// Parsed target: scheme, host, port.
 #[derive(Debug, PartialEq, Eq)]
@@ -13,16 +13,16 @@ pub struct ParsedTarget {
 /// Scheme defaults to "" and port defaults to 443 when absent.
 pub fn parse_scheme(target: &str) -> ParsedTarget {
     const SCHEMES: &[(&str, &str, u16)] = &[
-        ("smtp://",  "smtp",  25),
+        ("smtp://", "smtp", 25),
         ("smtps://", "smtps", 465),
-        ("imap://",  "imap",  143),
+        ("imap://", "imap", 143),
         ("imaps://", "imaps", 993),
-        ("pop3://",  "pop3",  110),
+        ("pop3://", "pop3", 110),
         ("pop3s://", "pop3s", 995),
-        ("ldap://",  "ldap",  389),
+        ("ldap://", "ldap", 389),
         ("ldaps://", "ldaps", 636),
         ("https://", "https", 443),
-        ("http://",  "http",  80),
+        ("http://", "http", 80),
     ];
 
     for (prefix, scheme, default_port) in SCHEMES {
@@ -36,7 +36,11 @@ pub fn parse_scheme(target: &str) -> ParsedTarget {
         }
     }
     let (host, port) = split_host_port(target, 443);
-    ParsedTarget { scheme: String::new(), host: host.to_string(), port }
+    ParsedTarget {
+        scheme: String::new(),
+        host: host.to_string(),
+        port,
+    }
 }
 
 fn split_host_port(s: &str, default_port: u16) -> (&str, u16) {
@@ -101,23 +105,29 @@ where
     let mut line = String::new();
 
     // 1. Read server greeting (220 ...)
-    buf.read_line(&mut line).await
+    buf.read_line(&mut line)
+        .await
         .map_err(|e| smtp_err(e.to_string()))?;
     if !line.starts_with("220") {
         return Err(smtp_err(format!("unexpected greeting: {}", line.trim())));
     }
 
     // 2. Send EHLO
-    buf.get_mut().write_all(b"EHLO pqaudit\r\n").await
+    buf.get_mut()
+        .write_all(b"EHLO pqaudit\r\n")
+        .await
         .map_err(|e| smtp_err(e.to_string()))?;
-    buf.get_mut().flush().await
+    buf.get_mut()
+        .flush()
+        .await
         .map_err(|e| smtp_err(e.to_string()))?;
 
     // 3. Read EHLO response (multi-line 250-... ending with 250 ...)
     let mut has_starttls = false;
     loop {
         line.clear();
-        buf.read_line(&mut line).await
+        buf.read_line(&mut line)
+            .await
             .map_err(|e| smtp_err(e.to_string()))?;
         if line.to_ascii_uppercase().contains("STARTTLS") {
             has_starttls = true;
@@ -125,22 +135,32 @@ where
         if line.starts_with("250 ") {
             break; // last line of multi-line EHLO response
         } else if !line.starts_with("250-") {
-            return Err(smtp_err(format!("unexpected EHLO response: {}", line.trim())));
+            return Err(smtp_err(format!(
+                "unexpected EHLO response: {}",
+                line.trim()
+            )));
         }
     }
     if !has_starttls {
-        return Err(smtp_err("server does not advertise STARTTLS capability".into()));
+        return Err(smtp_err(
+            "server does not advertise STARTTLS capability".into(),
+        ));
     }
 
     // 4. Send STARTTLS
-    buf.get_mut().write_all(b"STARTTLS\r\n").await
+    buf.get_mut()
+        .write_all(b"STARTTLS\r\n")
+        .await
         .map_err(|e| smtp_err(e.to_string()))?;
-    buf.get_mut().flush().await
+    buf.get_mut()
+        .flush()
+        .await
         .map_err(|e| smtp_err(e.to_string()))?;
 
     // 5. Read "220 Ready" (or equivalent 220 response)
     line.clear();
-    buf.read_line(&mut line).await
+    buf.read_line(&mut line)
+        .await
         .map_err(|e| smtp_err(e.to_string()))?;
     if !line.starts_with("220") {
         return Err(smtp_err(format!("STARTTLS rejected: {}", line.trim())));
@@ -158,21 +178,27 @@ where
     let mut line = String::new();
 
     // 1. Read greeting: "* OK ..."
-    buf.read_line(&mut line).await
+    buf.read_line(&mut line)
+        .await
         .map_err(|e| imap_err(e.to_string()))?;
     if !line.starts_with("* OK") {
         return Err(imap_err(format!("unexpected greeting: {}", line.trim())));
     }
 
     // 2. Send STARTTLS command
-    buf.get_mut().write_all(b"A001 STARTTLS\r\n").await
+    buf.get_mut()
+        .write_all(b"A001 STARTTLS\r\n")
+        .await
         .map_err(|e| imap_err(e.to_string()))?;
-    buf.get_mut().flush().await
+    buf.get_mut()
+        .flush()
+        .await
         .map_err(|e| imap_err(e.to_string()))?;
 
     // 3. Read tagged OK response: must be "A001 OK ..."
     line.clear();
-    buf.read_line(&mut line).await
+    buf.read_line(&mut line)
+        .await
         .map_err(|e| imap_err(e.to_string()))?;
     if !line.starts_with("A001 OK") {
         return Err(imap_err(format!("STARTTLS rejected: {}", line.trim())));
@@ -190,21 +216,27 @@ where
     let mut line = String::new();
 
     // 1. Read greeting: "+OK ..."
-    buf.read_line(&mut line).await
+    buf.read_line(&mut line)
+        .await
         .map_err(|e| pop3_err(e.to_string()))?;
     if !line.starts_with("+OK") {
         return Err(pop3_err(format!("unexpected greeting: {}", line.trim())));
     }
 
     // 2. Send STLS
-    buf.get_mut().write_all(b"STLS\r\n").await
+    buf.get_mut()
+        .write_all(b"STLS\r\n")
+        .await
         .map_err(|e| pop3_err(e.to_string()))?;
-    buf.get_mut().flush().await
+    buf.get_mut()
+        .flush()
+        .await
         .map_err(|e| pop3_err(e.to_string()))?;
 
     // 3. Read "+OK ..."
     line.clear();
-    buf.read_line(&mut line).await
+    buf.read_line(&mut line)
+        .await
         .map_err(|e| pop3_err(e.to_string()))?;
     if !line.starts_with("+OK") {
         return Err(pop3_err(format!("STLS rejected: {}", line.trim())));
@@ -226,15 +258,24 @@ where
 }
 
 fn smtp_err(reason: String) -> ProbeError {
-    ProbeError::StarttlsUpgradeFailed { protocol: StarttlsProtocol::Smtp, reason }
+    ProbeError::StarttlsUpgradeFailed {
+        protocol: StarttlsProtocol::Smtp,
+        reason,
+    }
 }
 
 fn imap_err(reason: String) -> ProbeError {
-    ProbeError::StarttlsUpgradeFailed { protocol: StarttlsProtocol::Imap, reason }
+    ProbeError::StarttlsUpgradeFailed {
+        protocol: StarttlsProtocol::Imap,
+        reason,
+    }
 }
 
 fn pop3_err(reason: String) -> ProbeError {
-    ProbeError::StarttlsUpgradeFailed { protocol: StarttlsProtocol::Pop3, reason }
+    ProbeError::StarttlsUpgradeFailed {
+        protocol: StarttlsProtocol::Pop3,
+        reason,
+    }
 }
 
 #[cfg(test)]
@@ -295,16 +336,25 @@ mod tests {
     async fn smtp_on_port_465_returns_smtps_hint() {
         let (client, _server) = tokio::io::duplex(64);
         let result = upgrade_to_tls("smtp", client, 465).await;
-        assert!(matches!(result, Err(ProbeError::StarttlsUpgradeFailed { .. })));
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed { .. })
+        ));
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("smtps"), "error should mention smtps://, got: {err}");
+        assert!(
+            err.contains("smtps"),
+            "error should mention smtps://, got: {err}"
+        );
     }
 
     #[tokio::test]
     async fn unknown_scheme_returns_error() {
         let (client, _server) = tokio::io::duplex(64);
         let result = upgrade_to_tls("ftp", client, 21).await;
-        assert!(matches!(result, Err(ProbeError::StarttlsUpgradeFailed { .. })));
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed { .. })
+        ));
     }
 
     #[tokio::test]
@@ -313,7 +363,10 @@ mod tests {
         let result = upgrade_to_tls("ldap", client, 389).await;
         assert!(matches!(
             result,
-            Err(ProbeError::StarttlsUpgradeFailed { protocol: StarttlsProtocol::Ldap, .. })
+            Err(ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Ldap,
+                ..
+            })
         ));
     }
 
@@ -324,7 +377,10 @@ mod tests {
         for scheme in &["smtps", "imaps", "pop3s", "ldaps", "https", ""] {
             let (client, _server) = tokio::io::duplex(64);
             let result = upgrade_to_tls(scheme, client, 443).await;
-            assert!(result.is_ok(), "scheme '{scheme}' should pass through without STARTTLS");
+            assert!(
+                result.is_ok(),
+                "scheme '{scheme}' should pass through without STARTTLS"
+            );
         }
     }
 
@@ -335,27 +391,37 @@ mod tests {
         let (client, mut server) = tokio::io::duplex(4096);
         // Write all server responses into the buffer BEFORE running the upgrade.
         // Keep `server` alive so client writes (EHLO, STARTTLS) don't hit broken-pipe.
-        server.write_all(
-            b"220 mail.test ESMTP\r\n\
+        server
+            .write_all(
+                b"220 mail.test ESMTP\r\n\
               250-mail.test\r\n\
               250-STARTTLS\r\n\
               250 OK\r\n\
               220 Go ahead\r\n",
-        ).await.unwrap();
+            )
+            .await
+            .unwrap();
 
         let result = smtp_upgrade(client).await;
         drop(server);
-        assert!(result.is_ok(), "SMTP STARTTLS upgrade should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "SMTP STARTTLS upgrade should succeed: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
     async fn smtp_upgrade_fails_when_no_starttls_capability() {
         let (client, mut server) = tokio::io::duplex(4096);
-        server.write_all(
-            b"220 mail.test ESMTP\r\n\
+        server
+            .write_all(
+                b"220 mail.test ESMTP\r\n\
               250-mail.test\r\n\
               250 OK\r\n",
-        ).await.unwrap();
+            )
+            .await
+            .unwrap();
 
         let result = smtp_upgrade(client).await;
         drop(server);
@@ -370,28 +436,44 @@ mod tests {
     #[tokio::test]
     async fn imap_starttls_upgrade_sequence() {
         let (client, mut server) = tokio::io::duplex(4096);
-        server.write_all(
-            b"* OK Dovecot ready\r\n\
+        server
+            .write_all(
+                b"* OK Dovecot ready\r\n\
               A001 OK Begin TLS negotiation now\r\n",
-        ).await.unwrap();
+            )
+            .await
+            .unwrap();
 
         let result = imap_upgrade(client).await;
         drop(server);
-        assert!(result.is_ok(), "IMAP STARTTLS upgrade should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "IMAP STARTTLS upgrade should succeed: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
     async fn imap_upgrade_fails_on_no_response() {
         let (client, mut server) = tokio::io::duplex(4096);
-        server.write_all(
-            b"* OK Dovecot ready\r\n\
+        server
+            .write_all(
+                b"* OK Dovecot ready\r\n\
               A001 NO STARTTLS not supported\r\n",
-        ).await.unwrap();
+            )
+            .await
+            .unwrap();
 
         let result = imap_upgrade(client).await;
         drop(server);
         assert!(
-            matches!(result, Err(ProbeError::StarttlsUpgradeFailed { protocol: StarttlsProtocol::Imap, .. })),
+            matches!(
+                result,
+                Err(ProbeError::StarttlsUpgradeFailed {
+                    protocol: StarttlsProtocol::Imap,
+                    ..
+                })
+            ),
             "IMAP rejection should propagate as StarttlsUpgradeFailed"
         );
     }
@@ -401,28 +483,44 @@ mod tests {
     #[tokio::test]
     async fn pop3_stls_upgrade_sequence() {
         let (client, mut server) = tokio::io::duplex(4096);
-        server.write_all(
-            b"+OK Dovecot ready\r\n\
+        server
+            .write_all(
+                b"+OK Dovecot ready\r\n\
               +OK Begin TLS negotiation\r\n",
-        ).await.unwrap();
+            )
+            .await
+            .unwrap();
 
         let result = pop3_upgrade(client).await;
         drop(server);
-        assert!(result.is_ok(), "POP3 STLS upgrade should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "POP3 STLS upgrade should succeed: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
     async fn pop3_upgrade_fails_on_err_response() {
         let (client, mut server) = tokio::io::duplex(4096);
-        server.write_all(
-            b"+OK Dovecot ready\r\n\
+        server
+            .write_all(
+                b"+OK Dovecot ready\r\n\
               -ERR STLS not available\r\n",
-        ).await.unwrap();
+            )
+            .await
+            .unwrap();
 
         let result = pop3_upgrade(client).await;
         drop(server);
         assert!(
-            matches!(result, Err(ProbeError::StarttlsUpgradeFailed { protocol: StarttlsProtocol::Pop3, .. })),
+            matches!(
+                result,
+                Err(ProbeError::StarttlsUpgradeFailed {
+                    protocol: StarttlsProtocol::Pop3,
+                    ..
+                })
+            ),
             "POP3 -ERR response should propagate as StarttlsUpgradeFailed"
         );
     }
