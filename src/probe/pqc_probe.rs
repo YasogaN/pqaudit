@@ -10,12 +10,12 @@ use crate::probe::hrr::is_hrr;
 /// Configuration for a single probe operation (timeout + SNI override).
 /// Scanner-level settings (concurrency, full_scan) live in the scanner config.
 #[derive(Debug, Clone)]
-pub struct ScanConfig {
+pub struct ProbeConfig {
     pub timeout_ms: u64,
     pub sni_override: Option<String>,
 }
 
-impl Default for ScanConfig {
+impl Default for ProbeConfig {
     fn default() -> Self {
         Self {
             timeout_ms: 5000,
@@ -124,7 +124,7 @@ pub async fn pqc_probe(
     host: &str,
     port: u16,
     sni_override: Option<&str>,
-    config: &ScanConfig,
+    config: &ProbeConfig,
 ) -> Result<PqcHandshakeResult, ProbeError> {
     let sni = sni_override.unwrap_or(host);
     let timeout_ms = config.timeout_ms;

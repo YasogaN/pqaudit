@@ -162,6 +162,29 @@ pub enum StarttlsProtocol {
     Ldap,
 }
 
+// ── Scan report ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TargetReport {
+    pub target: String,
+    pub port: u16,
+    pub score: audit::scoring::model::ScoringResult,
+    pub hndl: audit::hndl::HndlAssessment,
+    pub findings: Vec<audit::findings::Finding>,
+    pub cert_chain: Option<audit::cert_chain::CertChainReport>,
+    pub cipher_inventory: Option<CipherInventory>,
+    pub downgrade: DowngradeResult,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanReport {
+    pub schema_version: String,
+    pub scanned_at: String,
+    pub compliance_mode: cli::ComplianceMode,
+    pub targets: Vec<TargetReport>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
