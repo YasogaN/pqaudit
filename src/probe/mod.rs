@@ -23,8 +23,7 @@ pub(crate) async fn tcp_connect(
     use std::io::{Error, ErrorKind};
     use tokio::time::{Duration, Instant};
 
-    let addrs: Vec<std::net::SocketAddr> =
-        tokio::net::lookup_host((host, port)).await?.collect();
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host, port)).await?.collect();
 
     let deadline = Instant::now() + Duration::from_millis(total_timeout_ms);
     const PER_ADDR_MS: u64 = 2_000;
@@ -36,9 +35,7 @@ pub(crate) async fn tcp_connect(
             None => break,
         };
         let per_timeout = remaining.min(Duration::from_millis(PER_ADDR_MS));
-        match tokio::time::timeout(per_timeout, tokio::net::TcpStream::connect(addr))
-            .await
-        {
+        match tokio::time::timeout(per_timeout, tokio::net::TcpStream::connect(addr)).await {
             Ok(Ok(stream)) => return Ok(stream),
             Ok(Err(e)) => last_err = e,
             Err(_) => { /* per-address timeout — try next */ }

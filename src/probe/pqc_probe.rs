@@ -57,16 +57,20 @@ async fn probe_raw_group(
 ) -> Result<(u16, bool), ProbeError> {
     let hello = build_client_hello(sni, DEFAULT_CIPHER_SUITES, DEFAULT_NAMED_GROUPS, 0x0304);
 
-    let mut stream =
-        crate::probe::tcp_connect(host, port, timeout_ms)
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::TimedOut {
-                    ProbeError::Timeout { after_ms: timeout_ms }
-                } else {
-                    ProbeError::ConnectionRefused { host: host.into(), port }
+    let mut stream = crate::probe::tcp_connect(host, port, timeout_ms)
+        .await
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::TimedOut {
+                ProbeError::Timeout {
+                    after_ms: timeout_ms,
                 }
-            })?;
+            } else {
+                ProbeError::ConnectionRefused {
+                    host: host.into(),
+                    port,
+                }
+            }
+        })?;
 
     stream
         .write_all(&hello)
@@ -170,16 +174,20 @@ pub async fn pqc_probe(
 
     let connector = TlsConnector::from(Arc::new(tls_config));
 
-    let stream =
-        crate::probe::tcp_connect(host, port, timeout_ms)
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::TimedOut {
-                    ProbeError::Timeout { after_ms: timeout_ms }
-                } else {
-                    ProbeError::ConnectionRefused { host: host.into(), port }
+    let stream = crate::probe::tcp_connect(host, port, timeout_ms)
+        .await
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::TimedOut {
+                ProbeError::Timeout {
+                    after_ms: timeout_ms,
                 }
-            })?;
+            } else {
+                ProbeError::ConnectionRefused {
+                    host: host.into(),
+                    port,
+                }
+            }
+        })?;
 
     let server_name = rustls::pki_types::ServerName::try_from(sni.to_string()).map_err(|e| {
         ProbeError::TlsHandshakeFailed {
