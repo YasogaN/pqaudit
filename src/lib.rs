@@ -205,6 +205,7 @@ pub mod tests_common {
     }
 
     pub fn stub_target_report(score: u8) -> TargetReport {
+        use crate::CipherSuite;
         TargetReport {
             target: "example.com".into(),
             port: 443,
@@ -224,7 +225,13 @@ pub mod tests_common {
             },
             findings: vec![],
             cert_chain: Some(CertChainReport { entries: vec![], findings: vec![] }),
-            cipher_inventory: None,
+            cipher_inventory: Some(CipherInventory {
+                tls13_suites: vec![
+                    CipherSuite { id: 0x1302, name: "TLS_AES_256_GCM_SHA384".into() },
+                ],
+                tls12_suites: vec![],
+                kyber_draft_accepted: false,
+            }),
             downgrade: DowngradeResult::Rejected,
             error: None,
         }
