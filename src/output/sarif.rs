@@ -1,6 +1,6 @@
-use serde_json::{json, Value};
-use crate::ScanReport;
 use crate::audit::remediation::remediation_for;
+use crate::ScanReport;
+use serde_json::{json, Value};
 
 const SARIF_VERSION: &str = "2.1.0";
 const SARIF_SCHEMA: &str = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json";
@@ -134,9 +134,9 @@ pub fn render_sarif(report: &ScanReport) -> String {
 fn severity_to_sarif_level(severity: &crate::audit::findings::Severity) -> &'static str {
     use crate::audit::findings::Severity;
     match severity {
-        Severity::Error   => "error",
+        Severity::Error => "error",
         Severity::Warning => "warning",
-        Severity::Note    => "note",
+        Severity::Note => "note",
     }
 }
 

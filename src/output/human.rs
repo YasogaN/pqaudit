@@ -1,8 +1,8 @@
-use owo_colors::OwoColorize;
-use crate::{ScanReport, TargetReport};
 use crate::audit::findings::Severity;
 use crate::audit::hndl::HndlRating;
 use crate::output::compare::ComparisonReport;
+use crate::{ScanReport, TargetReport};
+use owo_colors::OwoColorize;
 
 /// Render a `ScanReport` as a human-readable terminal string.
 ///
@@ -17,7 +17,10 @@ pub fn render_human(report: &ScanReport, compare_mode: bool) -> String {
         env!("CARGO_PKG_VERSION"),
         report.scanned_at
     ));
-    out.push_str(&format!("Compliance mode: {}\n\n", report.compliance_mode_name()));
+    out.push_str(&format!(
+        "Compliance mode: {}\n\n",
+        report.compliance_mode_name()
+    ));
 
     for target in &report.targets {
         out.push_str(&render_target(target));
@@ -62,15 +65,12 @@ fn render_target(target: &TargetReport) -> String {
     } else {
         for finding in &target.findings {
             let icon = match finding.severity {
-                Severity::Error   => "✗".red().to_string(),
+                Severity::Error => "✗".red().to_string(),
                 Severity::Warning => "!".yellow().to_string(),
-                Severity::Note    => "·".dimmed().to_string(),
+                Severity::Note => "·".dimmed().to_string(),
             };
             let rule_id = finding.sarif_rule_id();
-            out.push_str(&format!(
-                "    {} [{}] {}\n",
-                icon, rule_id, finding.kind
-            ));
+            out.push_str(&format!("    {} [{}] {}\n", icon, rule_id, finding.kind));
         }
     }
 
@@ -79,7 +79,10 @@ fn render_target(target: &TargetReport) -> String {
 
 fn render_comparison(cmp: &ComparisonReport) -> String {
     let mut out = String::new();
-    out.push_str(&format!("\n{}\n", "── Comparison ──────────────────────────────".dimmed()));
+    out.push_str(&format!(
+        "\n{}\n",
+        "── Comparison ──────────────────────────────".dimmed()
+    ));
 
     // Header row
     let header: Vec<String> = cmp.targets.iter().map(|t| truncate(t, 20)).collect();
@@ -123,10 +126,10 @@ fn colorize_score(score: u8, text: &str) -> String {
 
 fn hndl_label(rating: &HndlRating) -> String {
     match rating {
-        HndlRating::None     => "None".green().to_string(),
-        HndlRating::Low      => "Low".green().to_string(),
-        HndlRating::Medium   => "Medium".yellow().to_string(),
-        HndlRating::High     => "High".red().to_string(),
+        HndlRating::None => "None".green().to_string(),
+        HndlRating::Low => "Low".green().to_string(),
+        HndlRating::Medium => "Medium".yellow().to_string(),
+        HndlRating::High => "High".red().to_string(),
         HndlRating::Critical => "Critical".red().bold().to_string(),
     }
 }
@@ -137,7 +140,11 @@ fn truncate(s: &str, max: usize) -> String {
         s.to_string()
     } else {
         // Find the byte index of the (max-1)th character boundary.
-        let cut = s.char_indices().nth(max.saturating_sub(1)).map(|(i, _)| i).unwrap_or(s.len());
+        let cut = s
+            .char_indices()
+            .nth(max.saturating_sub(1))
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
         format!("{}…", &s[..cut])
     }
 }
@@ -150,9 +157,9 @@ impl ComplianceModeDisplay for ScanReport {
     fn compliance_mode_name(&self) -> &str {
         use crate::cli::ComplianceMode;
         match self.compliance_mode {
-            ComplianceMode::Nist  => "NIST IR 8547",
+            ComplianceMode::Nist => "NIST IR 8547",
             ComplianceMode::Cnsa2 => "CNSA 2.0",
-            ComplianceMode::Fips  => "FIPS Binary Gates",
+            ComplianceMode::Fips => "FIPS Binary Gates",
         }
     }
 }
@@ -160,9 +167,9 @@ impl ComplianceModeDisplay for ScanReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests_common::{stub_scan_report, stub_target_report};
     use crate::cli::ComplianceMode;
     use crate::output::compare::build_comparison;
+    use crate::tests_common::{stub_scan_report, stub_target_report};
 
     fn stub_scan_report_with_score(score: u8) -> ScanReport {
         ScanReport {
@@ -178,8 +185,14 @@ mod tests {
     fn human_output_contains_score() {
         let report = stub_scan_report_with_score(72);
         let out = render_human(&report, false);
-        assert!(out.contains("72"), "output should contain score 72, got:\n{out}");
-        assert!(out.contains("example.com"), "output should contain hostname");
+        assert!(
+            out.contains("72"),
+            "output should contain score 72, got:\n{out}"
+        );
+        assert!(
+            out.contains("example.com"),
+            "output should contain hostname"
+        );
     }
 
     #[test]
@@ -200,7 +213,10 @@ mod tests {
     fn human_output_no_findings_shows_check() {
         let report = stub_scan_report();
         let out = render_human(&report, false);
-        assert!(out.contains("No findings"), "expected 'No findings' message");
+        assert!(
+            out.contains("No findings"),
+            "expected 'No findings' message"
+        );
     }
 
     #[test]
@@ -219,6 +235,9 @@ mod tests {
         report.comparison = Some(build_comparison(&report.clone()));
         let out = render_human(&report, true);
         assert!(out.contains("Comparison"), "expected comparison section");
-        assert!(out.contains("total"), "expected 'total' category in comparison");
+        assert!(
+            out.contains("total"),
+            "expected 'total' category in comparison"
+        );
     }
 }

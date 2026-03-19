@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::ScanReport;
+use serde::{Deserialize, Serialize};
 
 /// A per-category score comparison across all scanned targets.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,8 +71,8 @@ fn best_index(scores: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests_common::{stub_scan_report, stub_target_report};
     use crate::cli::ComplianceMode;
+    use crate::tests_common::{stub_scan_report, stub_target_report};
 
     fn stub_multi_target_report() -> ScanReport {
         let mut t1 = stub_target_report(80);
@@ -99,7 +99,11 @@ mod tests {
     fn compare_report_winner_points_to_higher_score() {
         let report = stub_multi_target_report();
         let comparison = build_comparison(&report);
-        let total = comparison.categories.iter().find(|c| c.name == "total").unwrap();
+        let total = comparison
+            .categories
+            .iter()
+            .find(|c| c.name == "total")
+            .unwrap();
         // target[0] has score 80, target[1] has score 60 → winner is index 0
         assert_eq!(total.winner, Some(0));
     }
@@ -118,7 +122,11 @@ mod tests {
             comparison: None,
         };
         let comparison = build_comparison(&report);
-        let total = comparison.categories.iter().find(|c| c.name == "total").unwrap();
+        let total = comparison
+            .categories
+            .iter()
+            .find(|c| c.name == "total")
+            .unwrap();
         assert_eq!(total.winner, None, "tied scores should have no winner");
     }
 
@@ -130,7 +138,10 @@ mod tests {
         report.comparison = Some(build_comparison(&report.clone()));
         let json = render_json(&report);
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert!(v.get("comparison").is_some(), "JSON must include 'comparison' key");
+        assert!(
+            v.get("comparison").is_some(),
+            "JSON must include 'comparison' key"
+        );
         assert!(v["comparison"]["targets"].is_array());
     }
 
@@ -140,8 +151,10 @@ mod tests {
         let report = stub_multi_target_report();
         let mut report = report;
         report.comparison = Some(build_comparison(&report.clone()));
-        let sarif: serde_json::Value =
-            serde_json::from_str(&render_sarif(&report)).unwrap();
-        assert!(sarif.get("comparison").is_none(), "SARIF must not contain comparison key");
+        let sarif: serde_json::Value = serde_json::from_str(&render_sarif(&report)).unwrap();
+        assert!(
+            sarif.get("comparison").is_none(),
+            "SARIF must not contain comparison key"
+        );
     }
 }

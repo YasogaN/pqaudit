@@ -1,6 +1,6 @@
+use crate::{ScanReport, TargetReport};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use crate::{ScanReport, TargetReport};
 
 const CBOM_FORMAT: &str = "CycloneDX";
 const CBOM_SPEC_VERSION: &str = "1.5";
@@ -16,10 +16,7 @@ struct CryptoAsset {
 pub fn render_cbom(report: &ScanReport) -> String {
     let components = build_components(&report.targets);
 
-    let serial = format!(
-        "urn:pqaudit:{}",
-        report.scanned_at.replace(':', "-").replace('.', "-")
-    );
+    let serial = format!("urn:pqaudit:{}", report.scanned_at.replace([':', '.'], "-"));
 
     let cbom = json!({
         "bomFormat": CBOM_FORMAT,
@@ -42,10 +39,12 @@ fn build_components(targets: &[TargetReport]) -> Vec<Value> {
     let mut assets: HashMap<String, CryptoAsset> = HashMap::new();
 
     let add = |assets: &mut HashMap<String, CryptoAsset>, alg: &str, occurrence: String| {
-        let entry = assets.entry(alg.to_string()).or_insert_with(|| CryptoAsset {
-            algorithm: alg.to_string(),
-            occurrences: vec![],
-        });
+        let entry = assets
+            .entry(alg.to_string())
+            .or_insert_with(|| CryptoAsset {
+                algorithm: alg.to_string(),
+                occurrences: vec![],
+            });
         entry.occurrences.push(occurrence);
     };
 
@@ -131,14 +130,16 @@ mod tests {
         assert_eq!(cbom["bomFormat"], "CycloneDX");
         assert_eq!(cbom["specVersion"], "1.5");
         let components = cbom["components"].as_array().unwrap();
-        assert!(!components.is_empty(), "expected at least one crypto component");
+        assert!(
+            !components.is_empty(),
+            "expected at least one crypto component"
+        );
     }
 
     #[test]
     fn cbom_component_type_is_cryptographic_asset() {
         let report = stub_scan_report();
-        let cbom: serde_json::Value =
-            serde_json::from_str(&render_cbom(&report)).unwrap();
+        let cbom: serde_json::Value = serde_json::from_str(&render_cbom(&report)).unwrap();
         let components = cbom["components"].as_array().unwrap();
         for c in components {
             assert_eq!(c["type"], "cryptographic-asset");
@@ -148,9 +149,7 @@ mod tests {
     #[test]
     fn cbom_is_valid_json() {
         let report = stub_scan_report();
-        assert!(
-            serde_json::from_str::<serde_json::Value>(&render_cbom(&report)).is_ok()
-        );
+        assert!(serde_json::from_str::<serde_json::Value>(&render_cbom(&report)).is_ok());
     }
 
     #[test]
