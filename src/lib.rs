@@ -160,6 +160,7 @@ pub enum StarttlsProtocol {
     Imap,
     Pop3,
     Ldap,
+    Other(String),
 }
 
 // ── Scan report ───────────────────────────────────────────────────────────────

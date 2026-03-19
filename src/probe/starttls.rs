@@ -83,7 +83,7 @@ where
         // Implicit TLS — pass stream through unchanged
         "smtps" | "imaps" | "pop3s" | "ldaps" | "https" | "http" | "" => Ok(stream),
         other => Err(ProbeError::StarttlsUpgradeFailed {
-            protocol: StarttlsProtocol::Smtp,
+            protocol: StarttlsProtocol::Other(other.to_string()),
             reason: format!("unknown scheme: {other}"),
         }),
     }
@@ -110,6 +110,8 @@ where
     // 2. Send EHLO
     buf.get_mut().write_all(b"EHLO pqaudit\r\n").await
         .map_err(|e| smtp_err(e.to_string()))?;
+    buf.get_mut().flush().await
+        .map_err(|e| smtp_err(e.to_string()))?;
 
     // 3. Read EHLO response (multi-line 250-... ending with 250 ...)
     let mut has_starttls = false;
@@ -132,6 +134,8 @@ where
 
     // 4. Send STARTTLS
     buf.get_mut().write_all(b"STARTTLS\r\n").await
+        .map_err(|e| smtp_err(e.to_string()))?;
+    buf.get_mut().flush().await
         .map_err(|e| smtp_err(e.to_string()))?;
 
     // 5. Read "220 Ready" (or equivalent 220 response)
@@ -163,12 +167,14 @@ where
     // 2. Send STARTTLS command
     buf.get_mut().write_all(b"A001 STARTTLS\r\n").await
         .map_err(|e| imap_err(e.to_string()))?;
+    buf.get_mut().flush().await
+        .map_err(|e| imap_err(e.to_string()))?;
 
-    // 3. Read tagged OK response
+    // 3. Read tagged OK response: must be "A001 OK ..."
     line.clear();
     buf.read_line(&mut line).await
         .map_err(|e| imap_err(e.to_string()))?;
-    if !line.contains("OK") {
+    if !line.starts_with("A001 OK") {
         return Err(imap_err(format!("STARTTLS rejected: {}", line.trim())));
     }
 
@@ -192,6 +198,8 @@ where
 
     // 2. Send STLS
     buf.get_mut().write_all(b"STLS\r\n").await
+        .map_err(|e| pop3_err(e.to_string()))?;
+    buf.get_mut().flush().await
         .map_err(|e| pop3_err(e.to_string()))?;
 
     // 3. Read "+OK ..."
@@ -372,6 +380,22 @@ mod tests {
         assert!(result.is_ok(), "IMAP STARTTLS upgrade should succeed: {:?}", result.err());
     }
 
+    #[tokio::test]
+    async fn imap_upgrade_fails_on_no_response() {
+        let (client, mut server) = tokio::io::duplex(4096);
+        server.write_all(
+            b"* OK Dovecot ready\r\n\
+              A001 NO STARTTLS not supported\r\n",
+        ).await.unwrap();
+
+        let result = imap_upgrade(client).await;
+        drop(server);
+        assert!(
+            matches!(result, Err(ProbeError::StarttlsUpgradeFailed { protocol: StarttlsProtocol::Imap, .. })),
+            "IMAP rejection should propagate as StarttlsUpgradeFailed"
+        );
+    }
+
     // ── POP3 STLS sequence ──────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -385,5 +409,21 @@ mod tests {
         let result = pop3_upgrade(client).await;
         drop(server);
         assert!(result.is_ok(), "POP3 STLS upgrade should succeed: {:?}", result.err());
+    }
+
+    #[tokio::test]
+    async fn pop3_upgrade_fails_on_err_response() {
+        let (client, mut server) = tokio::io::duplex(4096);
+        server.write_all(
+            b"+OK Dovecot ready\r\n\
+              -ERR STLS not available\r\n",
+        ).await.unwrap();
+
+        let result = pop3_upgrade(client).await;
+        drop(server);
+        assert!(
+            matches!(result, Err(ProbeError::StarttlsUpgradeFailed { protocol: StarttlsProtocol::Pop3, .. })),
+            "POP3 -ERR response should propagate as StarttlsUpgradeFailed"
+        );
     }
 }
