@@ -24,11 +24,18 @@ impl Default for ProbeConfig {
     }
 }
 
-/// Default PQC cipher suites to offer (TLS 1.3 only).
+/// Default cipher suites: TLS 1.3 suites first, then common TLS 1.2 suites so that
+/// TLS 1.2-only servers can respond and we can detect classical-only deployments.
 const DEFAULT_CIPHER_SUITES: &[u16] = &[
     0x1302, // TLS_AES_256_GCM_SHA384
     0x1301, // TLS_AES_128_GCM_SHA256
     0x1303, // TLS_CHACHA20_POLY1305_SHA256
+    0xC02C, // TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+    0xC02B, // TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+    0xC030, // TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+    0xC02F, // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+    0xCCA8, // TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+    0xCCA9, // TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
 ];
 
 /// Default named groups in preference order: PQC hybrid first, then classical fallbacks.
@@ -49,12 +56,13 @@ const SERVER_HELLO_RANDOM_END: usize = SERVER_HELLO_RANDOM_OFFSET + 32;
 
 /// Send a raw ClientHello and parse the initial ServerHello to extract the negotiated group.
 /// Also detects HelloRetryRequests by checking the server random field.
+/// Returns `Ok(None)` when the server responded but selected TLS 1.2 (no key_share group).
 async fn probe_raw_group(
     host: &str,
     port: u16,
     sni: &str,
     timeout_ms: u64,
-) -> Result<(u16, bool), ProbeError> {
+) -> Result<Option<(u16, bool)>, ProbeError> {
     let hello = build_client_hello(sni, DEFAULT_CIPHER_SUITES, DEFAULT_NAMED_GROUPS, 0x0304);
 
     let mut stream = crate::probe::tcp_connect(host, port, timeout_ms)
@@ -127,13 +135,14 @@ async fn probe_raw_group(
             } else {
                 false
             };
-            let group_code = selected_group.ok_or_else(|| ProbeError::TlsHandshakeFailed {
-                reason: "ServerHello missing key_share extension".into(),
-            })?;
-            Ok((group_code, hrr))
+            match selected_group {
+                Some(group_code) => Ok(Some((group_code, hrr))),
+                // No key_share extension means TLS 1.2 was negotiated — report as classical-only.
+                None => Ok(None),
+            }
         }
         ServerResponse::HandshakeFailure => Err(ProbeError::TlsHandshakeFailed {
-            reason: "server rejected all offered groups".into(),
+            reason: "server rejected all offered cipher suites".into(),
         }),
         ServerResponse::ConnectionClose => Err(ProbeError::TlsHandshakeFailed {
             reason: "server closed connection during handshake".into(),
@@ -155,17 +164,29 @@ pub async fn pqc_probe(
     let sni = sni_override.unwrap_or(host);
     let timeout_ms = config.timeout_ms;
 
-    // Step 1: Raw probe to get negotiated group and HRR status
-    let (group_code, hrr_required) = probe_raw_group(host, port, sni, timeout_ms).await?;
+    // Step 1: Raw probe to get negotiated group and HRR status.
+    // Returns None when the server negotiated TLS 1.2 (no key_share group available).
+    let raw = probe_raw_group(host, port, sni, timeout_ms).await?;
+    let (group_code, hrr_required) = match raw {
+        Some(pair) => pair,
+        // TLS 1.2-only server: proceed to rustls probe for cert/suite/version, use code 0 for group.
+        None => (0u16, false),
+    };
 
     // Step 2: rustls handshake to get cert chain, cipher suite, and TLS version
     let root_store = RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
 
+    let versions: &[&rustls::SupportedProtocolVersion] = if raw.is_none() {
+        // TLS 1.2-only server: restrict rustls to TLS 1.2 so the server doesn't reject us.
+        &[&rustls::version::TLS12]
+    } else {
+        &[&rustls::version::TLS13, &rustls::version::TLS12]
+    };
     let tls_config =
         ClientConfig::builder_with_provider(rustls::crypto::aws_lc_rs::default_provider().into())
-            .with_safe_default_protocol_versions()
+            .with_protocol_versions(versions)
             .map_err(|e| ProbeError::TlsHandshakeFailed {
                 reason: e.to_string(),
             })?

@@ -176,6 +176,29 @@ pub fn build_client_hello(
         extensions.extend_from_slice(&ext);
     }
 
+    // Signature algorithms extension (0x000d) — mandatory for TLS 1.3 per RFC 8446 §9.2
+    {
+        const SIG_ALGS: &[u16] = &[
+            0x0403, // ecdsa_secp256r1_sha256
+            0x0503, // ecdsa_secp384r1_sha384
+            0x0603, // ecdsa_secp521r1_sha512
+            0x0804, // rsa_pss_rsae_sha256
+            0x0805, // rsa_pss_rsae_sha384
+            0x0806, // rsa_pss_rsae_sha512
+            0x0401, // rsa_pkcs1_sha256
+            0x0501, // rsa_pkcs1_sha384
+            0x0601, // rsa_pkcs1_sha512
+        ];
+        let alg_bytes: Vec<u8> = SIG_ALGS.iter().flat_map(|a| a.to_be_bytes()).collect();
+        let list_len = alg_bytes.len() as u16;
+        let ext_data_len = list_len + 2;
+        let mut ext = vec![0x00, 0x0d];
+        ext.extend_from_slice(&ext_data_len.to_be_bytes());
+        ext.extend_from_slice(&list_len.to_be_bytes());
+        ext.extend_from_slice(&alg_bytes);
+        extensions.extend_from_slice(&ext);
+    }
+
     // Key share extension (0x0033)
     // Always use X25519 (0x001D) with the base point when X25519 is in named_groups.
     // PQC hybrid groups need ~1184–1216 byte key shares that we don't generate;
@@ -211,7 +234,8 @@ pub fn build_client_hello(
 
     // Build ClientHello body
     let mut hello_body = Vec::new();
-    hello_body.extend_from_slice(&max_version.to_be_bytes()); // version (legacy)
+    // legacy_version: RFC 8446 §4.1.2 mandates 0x0303 for TLS 1.3; 0x0303 is also correct for TLS 1.2
+    hello_body.extend_from_slice(&0x0303u16.to_be_bytes()); // version (legacy)
     hello_body.extend(std::iter::repeat_n(0u8, 32)); // random (32 zero bytes)
     hello_body.push(0x00); // session_id length = 0
     hello_body.extend_from_slice(&suites_len.to_be_bytes());
