@@ -4,9 +4,8 @@
 
 # pqaudit
 
-Audit any TLS endpoint for post-quantum cryptography readiness in seconds. With NIST's 2035
-deadline approaching and harvest-now-decrypt-later attacks active today, there's no safer time
-to know where your services stand.
+pqaudit probes any TLS endpoint for post-quantum readiness and scores it against NIST IR 8547,
+CNSA 2.0, and FIPS 140-3 — single binary, CI-native, CBOM output.
 
 ```sh
 $ pqaudit -o human cloudflare.com
@@ -16,9 +15,9 @@ Compliance mode: NIST IR 8547
   ● cloudflare.com:443  score: 70/100
     HNDL: Medium
     ! [PQA002] Hybrid PQC key exchange requires HelloRetryRequest (group: X25519MLKEM768)
-    ! [PQA005] Classical certificate (Leaf) with Ec { curve: "P-256" } must migrate by 2030
-    ! [PQA005] Classical certificate (Intermediate { depth: 1 }) with Ec { curve: "P-256" } must migrate by 2030
-    ! [PQA005] Classical certificate (Root) with Ec { curve: "P-384" } must migrate by 2030
+    ! [PQA005] Classical certificate (Leaf) with Ec { curve: "P-256" } deprecated for new use by 2030; disallowed after 2035
+    ! [PQA005] Classical certificate (Intermediate { depth: 1 }) with Ec { curve: "P-256" } deprecated for new use by 2030; disallowed after 2035
+    ! [PQA005] Classical certificate (Root) with Ec { curve: "P-384" } deprecated for new use by 2030; disallowed after 2035
     ✗ [PQA007] Server accepted TLS downgrade below 1.3
 ```
 
@@ -43,8 +42,13 @@ Compliance mode: NIST IR 8547
 - **0-100 score** — weighted rubric across five categories: key exchange (50 pts), TLS
   version (15), cipher suite (15), certificate chain (15), downgrade posture (5)
 - **HNDL risk** — rates harvest-now-decrypt-later exposure as NONE / LOW / MEDIUM / HIGH /
-  CRITICAL based on algorithm longevity and data sensitivity
+  CRITICAL based on algorithm longevity; use `--sensitivity <low|medium|high|critical>` to
+  incorporate data classification into the rating (default: unrated)
 - **Compliance modes** — `nist` (NIST IR 8547), `cnsa2` (NSA CNSA 2.0), `fips` (FIPS 140-3)
+
+> pqaudit tests what the **server** supports. Whether the calling client (browser, Go TLS
+> library, etc.) actually negotiates PQC is outside scope — check your client library's
+> version and cipher group configuration separately.
 
 ### Output
 
@@ -59,7 +63,8 @@ Compliance mode: NIST IR 8547
 - **CI/CD gate** — exits 1 when score falls below a configurable threshold
 - **GitHub Actions** — reference workflow for automated PQC auditing with SARIF upload
 - **MCP server** — exposes `scan_endpoint`, `compare_endpoints`, and `get_cbom` tools for
-  agent-driven workflows
+  agent-driven workflows; disabled by default (opt in with `--features mcp` at build time to
+  avoid pulling `rmcp` and `schemars` into the CLI binary)
 
 ---
 
@@ -156,7 +161,9 @@ pqaudit --full-scan example.com:443
 ```
 
 Enumerates all supported cipher suites via raw ClientHello probing. Slower but produces a
-complete `cipher_inventory` in the report.
+complete `cipher_inventory` in the report. Note: sequential ClientHello probing against
+WAF-protected or rate-limited targets may produce false negatives — missing suites in the
+inventory do not guarantee they are unsupported.
 
 ### Batch scan
 
@@ -251,16 +258,6 @@ timelines and algorithm tables.
 
 ---
 
-## AI Disclosure
-
-This project was developed with the assistance of an AI coding assistant (Claude by Anthropic).
-The design specification, implementation plan, source code, tests, CI/CD configuration, and
-documentation were all produced in whole or in part through AI-assisted development sessions.
-All code has been reviewed and the project is maintained by human contributors who take full
-responsibility for its correctness and quality.
-
----
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on reporting issues, proposing changes,
@@ -278,3 +275,8 @@ expected to uphold its standards.
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the full text.
+
+---
+
+*Developed with AI assistance (Claude, Anthropic). Code reviewed and maintained by human
+contributors who take full responsibility for correctness and quality.*
