@@ -40,11 +40,13 @@ fn build_components(targets: &[TargetReport]) -> Vec<Value> {
     let mut assets: HashMap<String, CryptoAsset> = HashMap::new();
 
     let mut add = |name: &str, primitive: &'static str, occurrence: String| {
-        let entry = assets.entry(name.to_string()).or_insert_with(|| CryptoAsset {
-            algorithm: name.to_string(),
-            primitive,
-            occurrences: vec![],
-        });
+        let entry = assets
+            .entry(name.to_string())
+            .or_insert_with(|| CryptoAsset {
+                algorithm: name.to_string(),
+                primitive,
+                occurrences: vec![],
+            });
         entry.occurrences.push(occurrence);
     };
 
