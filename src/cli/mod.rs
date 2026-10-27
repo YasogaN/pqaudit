@@ -36,6 +36,9 @@ pub struct Cli {
     /// Skip certificate chain validation (the chain is still parsed and audited).
     #[arg(long)]
     pub insecure: bool,
+    /// Additional PEM/DER trust anchor(s), e.g. for a private CA.
+    #[arg(long)]
+    pub ca_file: Option<std::path::PathBuf>,
 
     // Compliance
     #[arg(long, default_value = "nist")]

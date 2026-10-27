@@ -26,6 +26,8 @@ pub struct ScanConfig {
     pub q_day_year: u32,
     pub compliance: ComplianceMode,
     pub insecure: bool,
+    pub ca_file: Option<std::path::PathBuf>,
+    pub extra_roots: Vec<rustls::pki_types::CertificateDer<'static>>,
 }
 
 impl From<&Cli> for ScanConfig {
@@ -38,6 +40,8 @@ impl From<&Cli> for ScanConfig {
             q_day_year: cli.q_day,
             compliance: cli.compliance.clone(),
             insecure: cli.insecure,
+            ca_file: cli.ca_file.clone(),
+            extra_roots: vec![],
         }
     }
 }
@@ -52,13 +56,35 @@ impl Default for ScanConfig {
             q_day_year: 2030,
             compliance: ComplianceMode::Nist,
             insecure: false,
+            ca_file: None,
+            extra_roots: vec![],
         }
     }
 }
 
 /// Run a full audit on a list of targets and return the aggregated report.
 pub async fn scan(targets: Vec<String>, config: &ScanConfig) -> ScanReport {
-    let config = std::sync::Arc::new(config.clone());
+    let mut config = config.clone();
+    if let Some(path) = &config.ca_file {
+        match load_ca_roots(path) {
+            Ok(roots) => config.extra_roots.extend(roots),
+            Err(error) => {
+                let results = targets
+                    .into_iter()
+                    .map(|target| failed_target(target, &error, &config))
+                    .collect();
+                return ScanReport {
+                    schema_version: "1.0".into(),
+                    scanned_at: Utc::now().to_rfc3339(),
+                    compliance_mode: config.compliance.clone(),
+                    targets: results,
+                    comparison: None,
+                };
+            }
+        }
+    }
+
+    let config = std::sync::Arc::new(config);
 
     let results: Vec<TargetReport> = futures::stream::iter(targets)
         .map(|target| {
@@ -78,6 +104,69 @@ pub async fn scan(targets: Vec<String>, config: &ScanConfig) -> ScanReport {
     }
 }
 
+/// Load trust anchors from a PEM bundle or a single DER certificate.
+fn load_ca_roots(
+    path: &std::path::Path,
+) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>, String> {
+    let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if data.starts_with(b"-----BEGIN") {
+        let mut remaining = data.as_slice();
+        let mut roots = Vec::new();
+        while !remaining.is_empty() {
+            match x509_parser::pem::parse_x509_pem(remaining) {
+                Ok((rest, block)) => {
+                    if block.contents.is_empty() {
+                        return Err(format!("{}: empty certificate block", path.display()));
+                    }
+                    roots.push(rustls::pki_types::CertificateDer::from(block.contents));
+                    remaining = rest;
+                }
+                Err(e) => return Err(format!("{}: {e}", path.display())),
+            }
+        }
+        Ok(roots)
+    } else {
+        Ok(vec![rustls::pki_types::CertificateDer::from(data)])
+    }
+}
+
+/// Build a zero-score report for a target that could not be probed at all.
+fn failed_target(target: String, error: &str, config: &ScanConfig) -> TargetReport {
+    let parsed = parse_scheme(&target);
+    let (table, model) = compliance_pair(config.compliance.clone());
+    let empty_probe = ProbeResults {
+        target: target.clone(),
+        port: parsed.port,
+        pqc_handshake: Err(error.to_string()),
+        cipher_inventory: None,
+        downgrade: DowngradeResult::Rejected,
+    };
+    let score = model.score(&empty_probe, None, table.as_ref());
+    let hndl = DefaultHndlModel.assess(
+        &empty_probe,
+        &HndlConfig {
+            q_day_year: config.q_day_year,
+            current_year: Utc::now().year_unsigned(),
+            cert_expiry_year: None,
+        },
+    );
+    TargetReport {
+        target,
+        port: parsed.port,
+        score,
+        hndl,
+        findings: vec![],
+        cert_chain: None,
+        cipher_inventory: None,
+        downgrade: DowngradeResult::Rejected,
+        error: Some(error.to_string()),
+        negotiated_group: None,
+        negotiated_suite: None,
+        classical_fallback: false,
+        legacy_protocols: vec![],
+    }
+}
+
 /// Scan a single target end-to-end: probe → audit → score → report.
 async fn scan_single(target: String, config: &ScanConfig) -> TargetReport {
     let parsed = parse_scheme(&target);
@@ -91,6 +180,7 @@ async fn scan_single(target: String, config: &ScanConfig) -> TargetReport {
         sni_override: config.sni_override.clone(),
         scheme: parsed.scheme.clone(),
         insecure: config.insecure,
+        extra_roots: config.extra_roots.clone(),
     };
 
     // Run PQC probe and downgrade probe concurrently.
