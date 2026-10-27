@@ -448,7 +448,9 @@ async fn probe_legacy_versions(
     let mut versions = Vec::new();
     for version in [0x0301u16, 0x0302u16] {
         if let Some(accepted) = probe_legacy_version(host, port, sni, config, version).await {
-            versions.push(accepted);
+            if !versions.contains(&accepted) {
+                versions.push(accepted);
+            }
         }
     }
     versions
