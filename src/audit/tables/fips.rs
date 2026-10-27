@@ -62,11 +62,10 @@ impl DeadlineTable for FipsTable {
         })
     }
 
-    fn status_for(&self, alg: &AlgorithmId, current_year: u32) -> AlgorithmStatus {
+    fn status_for(&self, alg: &AlgorithmId, _current_year: u32) -> AlgorithmStatus {
         match self.deadline_for(alg) {
-            Some(d) if d.disallowed_year <= current_year => AlgorithmStatus::Disallowed,
-            Some(d) if d.deprecated_year <= current_year => AlgorithmStatus::Deprecated,
-            Some(_) => AlgorithmStatus::Approved,
+            // Every entry in this table is already disallowed.
+            Some(_) => AlgorithmStatus::Disallowed,
             // Every known algorithm without an entry here is FIPS-approved.
             None if !matches!(alg, AlgorithmId::Unknown) => AlgorithmStatus::Approved,
             None => AlgorithmStatus::Unknown,
