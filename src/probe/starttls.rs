@@ -211,13 +211,26 @@ where
         .await
         .map_err(|e| imap_err(e.to_string()))?;
 
-    // 3. Read tagged OK response: must be "A001 OK ..."
-    line.clear();
-    buf.read_line(&mut line)
-        .await
-        .map_err(|e| imap_err(e.to_string()))?;
-    if !line.starts_with("A001 OK") {
-        return Err(imap_err(format!("STARTTLS rejected: {}", line.trim())));
+    // 3. Read until the tagged response. Servers may send untagged
+    // responses (for example "* CAPABILITY ...") before "A001 OK".
+    loop {
+        line.clear();
+        buf.read_line(&mut line)
+            .await
+            .map_err(|e| imap_err(e.to_string()))?;
+        if line.starts_with("A001 OK") {
+            break;
+        }
+        if line.starts_with("A001 ") {
+            return Err(imap_err(format!("STARTTLS rejected: {}", line.trim())));
+        }
+        if line.starts_with('*') {
+            continue;
+        }
+        return Err(imap_err(format!(
+            "unexpected STARTTLS response: {}",
+            line.trim()
+        )));
     }
 
     Ok(buf.into_inner())
@@ -465,6 +478,26 @@ mod tests {
         assert!(
             result.is_ok(),
             "IMAP STARTTLS upgrade should succeed: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn imap_skips_untagged_responses_before_tagged_ok() {
+        let (client, mut server) = tokio::io::duplex(4096);
+        server
+            .write_all(
+                b"* OK Dovecot ready\r\n\
+              * CAPABILITY IMAP4rev1 STARTTLS\r\n\
+              A001 OK Begin TLS negotiation now\r\n",
+            )
+            .await
+            .unwrap();
+        let result = imap_upgrade(client).await;
+        drop(server);
+        assert!(
+            result.is_ok(),
+            "untagged responses should be skipped: {:?}",
             result.err()
         );
     }
