@@ -33,7 +33,8 @@ pub struct ScanConfig {
 impl From<&Cli> for ScanConfig {
     fn from(cli: &Cli) -> Self {
         Self {
-            concurrency: cli.concurrency,
+            // `buffer_unordered(0)` would stall forever; treat zero as one.
+            concurrency: cli.concurrency.max(1),
             full_scan: cli.full_scan,
             timeout_ms: cli.timeout,
             sni_override: cli.sni.clone(),
@@ -91,7 +92,10 @@ pub async fn scan(targets: Vec<String>, config: &ScanConfig) -> ScanReport {
             let cfg = std::sync::Arc::clone(&config);
             async move { scan_single(target, &cfg).await }
         })
-        .buffer_unordered(config.concurrency)
+        // `buffered` keeps the input order while still running up to
+        // `concurrency` probes at once. Report order must be stable for
+        // comparisons, baselines, and human consumption.
+        .buffered(config.concurrency)
         .collect()
         .await;
 
@@ -706,6 +710,37 @@ mod integration_tests {
 
         let missing = dir.path().join("missing.pem");
         assert!(load_ca_roots(&missing).is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scan_preserves_input_order_even_when_targets_finish_out_of_order() {
+        use crate::test_support::silent_server;
+        let slow = silent_server().await;
+        let fast = tls_server(aws_lc_rs::default_provider(), &[&rustls::version::TLS13]).await;
+        let mut cfg = insecure_config();
+        cfg.timeout_ms = 100;
+        cfg.concurrency = 2;
+        let report = scan(
+            vec![
+                format!("127.0.0.1:{}", slow.port()),
+                format!("127.0.0.1:{}", fast.port()),
+            ],
+            &cfg,
+        )
+        .await;
+        assert_eq!(report.targets.len(), 2);
+        assert_eq!(report.targets[0].port, slow.port());
+        assert!(report.targets[0].error.is_some());
+        assert_eq!(report.targets[1].port, fast.port());
+        assert!(report.targets[1].error.is_none());
+    }
+
+    #[test]
+    fn scan_config_clamps_zero_concurrency() {
+        use crate::cli::Cli;
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["pqaudit", "--concurrency", "0", "example.com"]).unwrap();
+        assert_eq!(ScanConfig::from(&cli).concurrency, 1);
     }
 
     #[test]
