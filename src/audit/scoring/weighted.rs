@@ -100,12 +100,7 @@ impl ScoringModel for NistWeightedModel {
                 );
                 (ke, tls, cs, dg)
             }
-            Err(_) => (
-                0,
-                0,
-                0,
-                crate::audit::scoring::model::downgrade_points(&probe.downgrade, false, &[]),
-            ),
+            Err(_) => (0, 0, 0, 0),
         };
         let (cert_points, cert_notes) = match cert_chain {
             Some(chain) => (cert_chain_points(chain), cert_chain_notes(chain)),
@@ -298,6 +293,123 @@ mod property_tests {
             let probe = make_probe(group_code, hrr);
             let result = model.score(&probe, None, &table);
             prop_assert!(result.total <= 100, "score {} > 100", result.total);
+        }
+    }
+
+    #[test]
+    fn key_exchange_point_table_is_complete() {
+        assert_eq!(key_exchange_points(0x11EC, false, 2026), 50);
+        assert_eq!(key_exchange_points(0x11EC, true, 2026), 40);
+        assert_eq!(key_exchange_points(0x11EB, false, 2026), 45);
+        assert_eq!(key_exchange_points(0x11ED, false, 2026), 50);
+        assert_eq!(key_exchange_points(0x11EA, false, 2026), 40);
+        assert_eq!(key_exchange_points(0x11E9, false, 2026), 35);
+        assert_eq!(key_exchange_points(0x11EE, false, 2026), 30);
+        assert_eq!(key_exchange_points(0x0202, false, 2026), 50);
+        assert_eq!(key_exchange_points(0x0201, false, 2026), 48);
+        assert_eq!(key_exchange_points(0x0201, false, 2033), 50);
+        assert_eq!(key_exchange_points(0x0200, false, 2026), 35);
+        assert_eq!(key_exchange_points(0x6399, false, 2026), 20);
+        assert_eq!(key_exchange_points(0x639A, false, 2026), 20);
+        assert_eq!(key_exchange_points(0x001D, false, 2026), 0);
+    }
+
+    #[test]
+    fn version_and_cipher_point_tables_are_complete() {
+        assert_eq!(tls_version_points(&TlsVersion::Tls13), 15);
+        assert_eq!(tls_version_points(&TlsVersion::Tls12), 5);
+        assert_eq!(tls_version_points(&TlsVersion::Tls11), 0);
+        assert_eq!(tls_version_points(&TlsVersion::Tls10), 0);
+        assert_eq!(tls_version_points(&TlsVersion::Unknown(0)), 0);
+
+        for id in [0x1302, 0xC02C, 0xC030, 0x1303, 0xCCA8, 0xCCA9] {
+            assert_eq!(cipher_suite_points(id), 15);
+        }
+        for id in [0x1301, 0xC02B, 0xC02F] {
+            assert_eq!(cipher_suite_points(id), 8);
+        }
+        for id in [0x000A, 0xFFFF] {
+            assert_eq!(cipher_suite_points(id), 0);
+        }
+    }
+
+    #[test]
+    fn model_metadata_and_cert_chain_branch() {
+        let model = NistWeightedModel;
+        assert_eq!(model.name(), "nist-weighted");
+        assert!(!model.description().is_empty());
+        let chain = CertChainReport {
+            entries: vec![],
+            findings: vec![],
+        };
+        let table = NistIr8547Table;
+        let probe = make_probe(0x11EC, false);
+        let result = model.score(&probe, Some(&chain), &table);
+        assert_eq!(result.cert_chain.points, 0);
+        assert!(!result.cert_chain.notes.is_empty());
+    }
+
+    #[test]
+    fn severity_covers_every_finding_kind() {
+        use crate::audit::findings::FindingKind;
+        use crate::{AlgorithmId, ChainPosition, KeyInfo};
+        use chrono::NaiveDate;
+        let model = NistWeightedModel;
+        let cases = vec![
+            FindingKind::ClassicalKeyExchangeOnly {
+                group: crate::NamedGroup {
+                    code_point: 0x001D,
+                    name: "x25519".into(),
+                    is_pqc: false,
+                },
+            },
+            FindingKind::HybridKeyExchangeHrrRequired {
+                group: crate::NamedGroup {
+                    code_point: 0x11EC,
+                    name: "X25519MLKEM768".into(),
+                    is_pqc: true,
+                },
+            },
+            FindingKind::DeprecatedPqcDraftCodepoint { code_point: 0x6399 },
+            FindingKind::WeakSymmetricCipher {
+                suite: CipherSuite {
+                    id: 0x000A,
+                    name: "3DES".into(),
+                },
+            },
+            FindingKind::ClassicalCertificate {
+                position: ChainPosition::Leaf,
+                key: KeyInfo::Rsa { bits: 2048 },
+                deadline: 2035,
+            },
+            FindingKind::DowngradeAccepted,
+            FindingKind::TlsVersionInsufficient {
+                max_version: TlsVersion::Tls12,
+            },
+            FindingKind::CertExpiresAfterDeadline {
+                expiry: NaiveDate::from_ymd_opt(2035, 1, 1).unwrap(),
+                deadline: 2030,
+                algorithm: AlgorithmId::Rsa { min_bits: 2048 },
+            },
+            FindingKind::UnparseableCertificate { depth: 0 },
+            FindingKind::WeakCertificateSignature {
+                position: ChainPosition::Leaf,
+                algorithm: "sha1".into(),
+            },
+            FindingKind::ExpiredCertificate {
+                position: ChainPosition::Leaf,
+                expiry: NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+            },
+            FindingKind::ClassicalFallbackAccepted,
+            FindingKind::LegacyTlsProtocol {
+                version: TlsVersion::Tls10,
+            },
+            FindingKind::CertificateValidationFailed {
+                reason: "bad".into(),
+            },
+        ];
+        for kind in cases {
+            let _ = model.severity(&kind);
         }
     }
 }

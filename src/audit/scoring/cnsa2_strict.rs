@@ -61,12 +61,7 @@ impl ScoringModel for Cnsa2StrictModel {
                 );
                 (ke, tls, cs, dg)
             }
-            Err(_) => (
-                0,
-                0,
-                0,
-                crate::audit::scoring::model::downgrade_points(&probe.downgrade, false, &[]),
-            ),
+            Err(_) => (0, 0, 0, 0),
         };
         let (cert_points, cert_notes) = match cert_chain {
             Some(chain) => (cert_chain_points(chain), cert_chain_notes(chain)),
@@ -210,5 +205,114 @@ mod tests {
         }
         let result = model.score(&probe, None, &table);
         assert_eq!(result.cipher_suite.points, 0);
+    }
+
+    #[test]
+    fn key_exchange_and_cipher_tables_cover_all_branches() {
+        assert_eq!(cnsa2_key_exchange_points(0x0202), 50);
+        assert_eq!(cnsa2_key_exchange_points(0x11ED), 50);
+        assert_eq!(cnsa2_key_exchange_points(0x0201), 35);
+        assert_eq!(cnsa2_key_exchange_points(0x11EC), 30);
+        assert_eq!(cnsa2_key_exchange_points(0x11EB), 25);
+        assert_eq!(cnsa2_key_exchange_points(0x11EA), 20);
+        assert_eq!(cnsa2_key_exchange_points(0x11E9), 15);
+        assert_eq!(cnsa2_key_exchange_points(0x0200), 15);
+        assert_eq!(cnsa2_key_exchange_points(0x001D), 0);
+
+        assert_eq!(cnsa2_cipher_suite_points(0x1302), 15);
+        assert_eq!(cnsa2_cipher_suite_points(0xC02C), 15);
+        assert_eq!(cnsa2_cipher_suite_points(0xC030), 15);
+        assert_eq!(cnsa2_cipher_suite_points(0x1301), 0);
+        assert_eq!(tls_version_points(&TlsVersion::Tls13), 15);
+        assert_eq!(tls_version_points(&TlsVersion::Tls12), 5);
+        assert_eq!(tls_version_points(&TlsVersion::Tls10), 0);
+
+        let model = Cnsa2StrictModel;
+        assert_eq!(model.name(), "cnsa2-strict");
+        assert!(!model.description().is_empty());
+        let table = Cnsa2Table;
+        let chain = CertChainReport {
+            entries: vec![],
+            findings: vec![],
+        };
+        let probe = pqc_probe_result(0x0202, false);
+        assert_eq!(
+            model.score(&probe, Some(&chain), &table).cert_chain.points,
+            0
+        );
+    }
+
+    #[test]
+    fn failed_handshake_scores_zero() {
+        let model = Cnsa2StrictModel;
+        let table = Cnsa2Table;
+        let mut probe = pqc_probe_result(0x0202, false);
+        probe.pqc_handshake = Err("boom".into());
+        let result = model.score(&probe, None, &table);
+        assert_eq!(result.total, 0);
+    }
+
+    #[test]
+    fn severity_covers_every_finding_kind() {
+        use crate::audit::findings::FindingKind;
+        use crate::{AlgorithmId, ChainPosition, KeyInfo};
+        use chrono::NaiveDate;
+        let model = Cnsa2StrictModel;
+        let cases = vec![
+            FindingKind::ClassicalKeyExchangeOnly {
+                group: crate::NamedGroup {
+                    code_point: 0x001D,
+                    name: "x25519".into(),
+                    is_pqc: false,
+                },
+            },
+            FindingKind::HybridKeyExchangeHrrRequired {
+                group: crate::NamedGroup {
+                    code_point: 0x11EC,
+                    name: "X25519MLKEM768".into(),
+                    is_pqc: true,
+                },
+            },
+            FindingKind::DeprecatedPqcDraftCodepoint { code_point: 0x6399 },
+            FindingKind::WeakSymmetricCipher {
+                suite: CipherSuite {
+                    id: 0x000A,
+                    name: "3DES".into(),
+                },
+            },
+            FindingKind::ClassicalCertificate {
+                position: ChainPosition::Leaf,
+                key: KeyInfo::Rsa { bits: 2048 },
+                deadline: 2035,
+            },
+            FindingKind::DowngradeAccepted,
+            FindingKind::TlsVersionInsufficient {
+                max_version: TlsVersion::Tls12,
+            },
+            FindingKind::CertExpiresAfterDeadline {
+                expiry: NaiveDate::from_ymd_opt(2035, 1, 1).unwrap(),
+                deadline: 2030,
+                algorithm: AlgorithmId::Rsa { min_bits: 2048 },
+            },
+            FindingKind::UnparseableCertificate { depth: 0 },
+            FindingKind::WeakCertificateSignature {
+                position: ChainPosition::Leaf,
+                algorithm: "sha1".into(),
+            },
+            FindingKind::ExpiredCertificate {
+                position: ChainPosition::Leaf,
+                expiry: NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+            },
+            FindingKind::ClassicalFallbackAccepted,
+            FindingKind::LegacyTlsProtocol {
+                version: TlsVersion::Tls10,
+            },
+            FindingKind::CertificateValidationFailed {
+                reason: "bad".into(),
+            },
+        ];
+        for kind in cases {
+            let _ = model.severity(&kind);
+        }
     }
 }
