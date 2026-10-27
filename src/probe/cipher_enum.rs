@@ -2,6 +2,19 @@ use crate::audit::tables::iana_ciphers::{cipher_name, is_tls13_suite, tls12_suit
 use crate::probe::handshake::{build_client_hello, send_and_receive, ServerResponse};
 use crate::{CipherInventory, CipherSuite};
 
+/// Groups offered during cipher enumeration. PQC groups must be included so
+/// PQC-only servers can answer (via HelloRetryRequest) instead of rejecting the
+/// probe as classical-only.
+const PROBE_GROUPS: &[u16] = &[
+    0x11EC, // X25519MLKEM768
+    0x11EB, // SecP256r1MLKEM768
+    0x11ED, // SecP384r1MLKEM1024
+    0x0201, // ML-KEM-768
+    0x0202, // ML-KEM-1024
+    0x001D, // X25519
+    0x0017, // secp256r1
+];
+
 /// Classify a ServerResponse to extract which cipher suite was selected.
 pub fn extract_selected_suite(response: &ServerResponse) -> Option<u16> {
     match response {
@@ -19,7 +32,7 @@ async fn probe_with_suites(
     timeout_ms: u64,
     max_version: u16,
 ) -> Option<u16> {
-    let hello = build_client_hello(sni, suites, &[0x001D, 0x0017], max_version);
+    let hello = build_client_hello(sni, suites, PROBE_GROUPS, max_version);
     let mut stream = crate::probe::connect(host, port, scheme, timeout_ms)
         .await
         .ok()?;
@@ -184,6 +197,23 @@ mod tests {
             fixed_response_server(server_hello(0x1302, Some(0x6399), 0x0303, Some(HRR_RANDOM)))
                 .await;
         assert!(probe_kyber_draft("127.0.0.1", server.port(), "localhost", "", 2000).await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enumerate_ciphers_works_against_pqc_only_servers() {
+        use crate::test_support::{provider_with_groups, tls_server};
+        use rustls::crypto::aws_lc_rs;
+
+        let server = tls_server(
+            provider_with_groups(vec![aws_lc_rs::kx_group::X25519MLKEM768]),
+            &[&rustls::version::TLS13],
+        )
+        .await;
+        let inv = enumerate_ciphers("127.0.0.1", server.port(), "localhost", "", 2000).await;
+        assert!(
+            !inv.tls13_suites.is_empty(),
+            "PQC-only server should still report TLS 1.3 suites"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
