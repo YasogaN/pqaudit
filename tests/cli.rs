@@ -44,3 +44,14 @@ fn invalid_flag_is_a_usage_error() {
     assert_eq!(output.status.code(), Some(3));
     assert!(String::from_utf8_lossy(&output.stderr).contains("unexpected argument"));
 }
+
+#[test]
+fn help_exits_zero() {
+    let output = pqaudit()
+        .arg("--help")
+        .output()
+        .expect("run pqaudit --help");
+    assert_eq!(output.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Usage"));
+    assert!(output.stderr.is_empty());
+}
