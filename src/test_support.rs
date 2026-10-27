@@ -254,6 +254,74 @@ pub fn parse_client_hello(bytes: &[u8]) -> (Vec<u16>, Vec<u16>) {
     (suites, groups)
 }
 
+/// Extract the SNI host name from a ClientHello record.
+pub fn parse_client_hello_sni(bytes: &[u8]) -> Option<String> {
+    if bytes.len() < 5 + 4 + 2 + 32 + 1 {
+        return None;
+    }
+    let record_len = u16::from_be_bytes([bytes[3], bytes[4]]) as usize;
+    let payload = &bytes[5..5 + record_len.min(bytes.len() - 5)];
+    let body = &payload[4..];
+    let sid_len = body[34] as usize;
+    let mut pos = 35 + sid_len;
+    if body.len() < pos + 2 {
+        return None;
+    }
+    let suites_len = u16::from_be_bytes([body[pos], body[pos + 1]]) as usize;
+    pos += 2 + suites_len;
+    if body.len() < pos + 1 {
+        return None;
+    }
+    let comp_len = body[pos] as usize;
+    pos += 1 + comp_len;
+    if body.len() < pos + 2 {
+        return None;
+    }
+    let ext_len = u16::from_be_bytes([body[pos], body[pos + 1]]) as usize;
+    pos += 2;
+    let end = (pos + ext_len).min(body.len());
+    while pos + 4 <= end {
+        let ext_type = u16::from_be_bytes([body[pos], body[pos + 1]]);
+        let ext_len = u16::from_be_bytes([body[pos + 2], body[pos + 3]]) as usize;
+        pos += 4;
+        if pos + ext_len > end {
+            break;
+        }
+        if ext_type == 0x0000 && ext_len >= 5 {
+            let name_len = u16::from_be_bytes([body[pos + 3], body[pos + 4]]) as usize;
+            if pos + 5 + name_len <= pos + ext_len {
+                return String::from_utf8(body[pos + 5..pos + 5 + name_len].to_vec()).ok();
+            }
+        }
+        pos += ext_len;
+    }
+    None
+}
+
+/// Start a server that only responds when the ClientHello SNI matches
+/// `expected`. This makes SNI propagation testable.
+pub async fn sni_checking_server(expected: String, response: Vec<u8>) -> TestServer {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    let handle = tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let expected = expected.clone();
+            let response = response.clone();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 8192];
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    return;
+                }
+                if parse_client_hello_sni(&buf[..n]).as_deref() == Some(expected.as_str()) {
+                    let _ = stream.write_all(&response).await;
+                }
+            });
+        }
+    });
+    TestServer::new(addr, handle)
+}
+
 /// Start a server that selects the first suite it finds in both `accepted` and
 /// the client's offer. Returns a ServerHello; if nothing matches, closes.
 pub async fn suite_selecting_server(accepted: Vec<u16>, selected_group: Option<u16>) -> TestServer {
@@ -360,6 +428,18 @@ mod tests {
         let (suites, groups) = parse_client_hello(&hello);
         assert_eq!(suites, vec![0x1301, 0x1302]);
         assert_eq!(groups, vec![0x11EC, 0x001D]);
+    }
+
+    #[test]
+    fn parse_client_hello_sni_extracts_host_name() {
+        let hello = build_client_hello("sni.example", &[0x1301], &[0x001D], 0x0304);
+        assert_eq!(
+            parse_client_hello_sni(&hello).as_deref(),
+            Some("sni.example")
+        );
+        assert_eq!(parse_client_hello_sni(&[]), None);
+        let no_sni = build_client_hello("", &[0x1301], &[0x001D], 0x0304);
+        assert_eq!(parse_client_hello_sni(&no_sni), None);
     }
 
     #[test]

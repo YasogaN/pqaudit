@@ -28,10 +28,11 @@ pub fn classify_downgrade(response: &ServerResponse) -> DowngradeResult {
 pub async fn probe_downgrade(
     host: &str,
     port: u16,
+    sni: &str,
     scheme: &str,
     timeout_ms: u64,
 ) -> DowngradeResult {
-    let hello = build_client_hello(host, CLASSICAL_SUITES, CLASSICAL_GROUPS, 0x0303);
+    let hello = build_client_hello(sni, CLASSICAL_SUITES, CLASSICAL_GROUPS, 0x0303);
     let mut stream = match crate::probe::connect(host, port, scheme, timeout_ms).await {
         Ok(s) => s,
         Err(crate::ProbeError::Timeout { .. }) => return DowngradeResult::Timeout,
@@ -117,7 +118,7 @@ mod tests {
 
         let server = fixed_response_server(server_hello(0xC02F, None, 0x0303, None)).await;
         assert_eq!(
-            probe_downgrade("127.0.0.1", server.port(), "", 2000).await,
+            probe_downgrade("127.0.0.1", server.port(), "localhost", "", 2000).await,
             DowngradeResult::Accepted {
                 negotiated_version: TlsVersion::Tls12
             }
@@ -130,7 +131,7 @@ mod tests {
 
         let server = fixed_response_server(vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]).await;
         assert_eq!(
-            probe_downgrade("127.0.0.1", server.port(), "", 2000).await,
+            probe_downgrade("127.0.0.1", server.port(), "localhost", "", 2000).await,
             DowngradeResult::Rejected
         );
     }
@@ -141,7 +142,7 @@ mod tests {
 
         let silent = silent_server().await;
         assert_eq!(
-            probe_downgrade("127.0.0.1", silent.port(), "", 50).await,
+            probe_downgrade("127.0.0.1", silent.port(), "localhost", "", 50).await,
             DowngradeResult::Timeout
         );
 
@@ -149,16 +150,41 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         assert_eq!(
-            probe_downgrade("127.0.0.1", port, "", 50).await,
+            probe_downgrade("127.0.0.1", port, "localhost", "", 50).await,
             DowngradeResult::Rejected
         );
 
         // RFC 5737 TEST-NET-1: connection cannot complete, so this maps to
         // Timeout on Linux and to Rejected on platforms that fail fast.
         assert!(matches!(
-            probe_downgrade("192.0.2.1", 443, "", 10).await,
+            probe_downgrade("192.0.2.1", 443, "localhost", "", 10).await,
             DowngradeResult::Timeout | DowngradeResult::Rejected
         ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn probe_downgrade_uses_sni_override() {
+        use crate::test_support::{server_hello, sni_checking_server};
+
+        let matching = sni_checking_server(
+            "expected.example".into(),
+            server_hello(0xC02F, None, 0x0303, None),
+        )
+        .await;
+        assert!(matches!(
+            probe_downgrade("127.0.0.1", matching.port(), "expected.example", "", 2000).await,
+            DowngradeResult::Accepted { .. }
+        ));
+
+        let mismatched = sni_checking_server(
+            "other.example".into(),
+            server_hello(0xC02F, None, 0x0303, None),
+        )
+        .await;
+        assert_eq!(
+            probe_downgrade("127.0.0.1", mismatched.port(), "expected.example", "", 2000).await,
+            DowngradeResult::Rejected
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -167,7 +193,7 @@ mod tests {
         use rustls::crypto::aws_lc_rs;
 
         let server = smtp_starttls_server(aws_lc_rs::default_provider()).await;
-        let result = probe_downgrade("127.0.0.1", server.port(), "smtp", 2000).await;
+        let result = probe_downgrade("127.0.0.1", server.port(), "localhost", "smtp", 2000).await;
         assert!(matches!(result, DowngradeResult::Accepted { .. }));
     }
 }

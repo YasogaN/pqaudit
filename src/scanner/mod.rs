@@ -190,12 +190,12 @@ async fn scan_single(target: String, config: &ScanConfig) -> TargetReport {
     // Run PQC probe and downgrade probe concurrently.
     let (pqc_result, downgrade) = tokio::join!(
         pqc_probe(&host, port, Some(&sni), &probe_cfg),
-        probe_downgrade(&host, port, &parsed.scheme, timeout_ms),
+        probe_downgrade(&host, port, &sni, &parsed.scheme, timeout_ms),
     );
 
     // Cipher enumeration only when --full-scan is requested.
     let cipher_inventory = if config.full_scan {
-        Some(enumerate_ciphers(&host, port, &parsed.scheme, timeout_ms).await)
+        Some(enumerate_ciphers(&host, port, &sni, &parsed.scheme, timeout_ms).await)
     } else {
         None
     };
