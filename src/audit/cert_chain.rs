@@ -117,7 +117,8 @@ pub fn parse_algorithm_id(spki: &SubjectPublicKeyInfo) -> Option<AlgorithmId> {
             Some("P-256") => Some(AlgorithmId::EcP256),
             Some("P-384") => Some(AlgorithmId::EcP384),
             Some("P-521") => Some(AlgorithmId::EcP521),
-            _ => None,
+            Some(_) => Some(AlgorithmId::EcOther),
+            None => None,
         },
         OID_DSA => Some(AlgorithmId::Dsa {
             min_bits: spki.parsed().ok().map(|k| k.key_size() as u32).unwrap_or(0),
@@ -644,7 +645,11 @@ mod tests {
                 curve: "secp256k1".into()
             }
         );
-        assert_eq!(report.entries[0].algorithm, AlgorithmId::Unknown);
+        assert_eq!(report.entries[0].algorithm, AlgorithmId::EcOther);
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| matches!(f.kind, FindingKind::ClassicalCertificate { .. })));
     }
 
     #[test]

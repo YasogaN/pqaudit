@@ -26,6 +26,12 @@ impl DeadlineTable for FipsTable {
                 disallowed_year: 2000,
                 note: "DSA is not approved by FIPS 186-5",
             },
+            // Non-NIST curves are not approved by FIPS 186-5.
+            AlgorithmId::EcOther => DeadlineInfo {
+                deprecated_year: 2000,
+                disallowed_year: 2000,
+                note: "Non-NIST curve is not FIPS-approved",
+            },
             // X25519/X448 are not approved by SP 800-56A/56B or FIPS 186-5.
             AlgorithmId::X25519 | AlgorithmId::X448 => DeadlineInfo {
                 deprecated_year: 2000,

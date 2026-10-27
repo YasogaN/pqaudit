@@ -98,6 +98,7 @@ pub enum AlgorithmId {
     EcP256,
     EcP384,
     EcP521,
+    EcOther,
     X25519,
     X448,
     Ed25519,
@@ -143,6 +144,7 @@ impl AlgorithmId {
                 | Self::EcP256
                 | Self::EcP384
                 | Self::EcP521
+                | Self::EcOther
                 | Self::X25519
                 | Self::X448
                 | Self::Ed25519

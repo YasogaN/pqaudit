@@ -54,6 +54,7 @@ impl DeadlineTable for NistIr8547Table {
             | AlgorithmId::EcP256
             | AlgorithmId::EcP384
             | AlgorithmId::EcP521
+            | AlgorithmId::EcOther
             | AlgorithmId::X25519
             | AlgorithmId::X448
             | AlgorithmId::Ed25519
@@ -132,6 +133,7 @@ mod tests {
             AlgorithmId::EcP256,
             AlgorithmId::EcP384,
             AlgorithmId::EcP521,
+            AlgorithmId::EcOther,
             AlgorithmId::X25519,
             AlgorithmId::X448,
             AlgorithmId::Ed25519,
