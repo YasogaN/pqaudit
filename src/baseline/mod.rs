@@ -39,11 +39,12 @@ pub fn diff_reports(
         });
     }
 
-    // Build lookup map from target string → TargetReport for the baseline.
-    let baseline_map: std::collections::HashMap<&str, &TargetReport> = baseline
+    // Identify targets by host AND port: example.com:443 and example.com:8443
+    // are different endpoints and must not be compared against each other.
+    let baseline_map: std::collections::HashMap<String, &TargetReport> = baseline
         .targets
         .iter()
-        .map(|t| (t.target.as_str(), t))
+        .map(|t| (target_key(t), t))
         .collect();
 
     let diffs = current
@@ -51,12 +52,16 @@ pub fn diff_reports(
         .iter()
         .filter_map(|cur| {
             baseline_map
-                .get(cur.target.as_str())
+                .get(&target_key(cur))
                 .map(|base| diff_target(base, cur))
         })
         .collect();
 
     Ok(diffs)
+}
+
+fn target_key(target: &TargetReport) -> String {
+    format!("{}:{}", target.target, target.port)
 }
 
 /// Compute a diff between a baseline TargetReport and the current one.
@@ -163,6 +168,27 @@ mod tests {
         let diff = diff_target(&current.targets[0], &baseline.targets[0]);
         assert!(diff.new_findings.contains(&"PQA001".to_string()));
         assert!(diff.resolved_findings.is_empty());
+    }
+
+    #[test]
+    fn diff_reports_distinguishes_ports_on_the_same_host() {
+        let mut baseline = stub_scan_report();
+        baseline.targets[0].target = "example.com".into();
+        baseline.targets[0].port = 443;
+        baseline.targets[0].score.total = 80;
+
+        let mut current = stub_scan_report();
+        current.targets[0].target = "example.com".into();
+        current.targets[0].port = 8443;
+        current.targets[0].score.total = 40;
+
+        let diffs = diff_reports(&baseline, &current).unwrap();
+        assert!(diffs.is_empty(), "different ports must not be diffed");
+
+        current.targets[0].port = 443;
+        let diffs = diff_reports(&baseline, &current).unwrap();
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].score_delta, -40);
     }
 
     #[test]
