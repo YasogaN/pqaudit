@@ -14,7 +14,7 @@ Compliance mode: NIST IR 8547
   ● cloudflare.com:443  score: 85/100
     HNDL: Medium
     ! [PQA002] Hybrid PQC key exchange requires HelloRetryRequest (group: X25519MLKEM768)
-    ! [PQA005] Classical certificate (Leaf) with Ec { curve: "P-256" } must migrate by 2035
+    ! [PQA006] Classical certificate (Leaf) with Ec { curve: "P-256" } must migrate by 2035
     ! [PQA013] Server accepts a classical-only TLS 1.3 key exchange (PQC is not enforced)
 ```
 
