@@ -72,7 +72,7 @@ fn best_index(scores: &[u8]) -> Option<usize> {
 mod tests {
     use super::*;
     use crate::cli::ComplianceMode;
-    use crate::tests_common::{stub_scan_report, stub_target_report};
+    use crate::tests_common::stub_target_report;
 
     fn stub_multi_target_report() -> ScanReport {
         let mut t1 = stub_target_report(80);

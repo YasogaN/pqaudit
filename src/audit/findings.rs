@@ -116,7 +116,7 @@ impl Finding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChainPosition, CipherSuite, KeyInfo, NamedGroup};
+    use crate::{ChainPosition, KeyInfo, NamedGroup};
 
     #[test]
     fn finding_has_stable_sarif_id() {

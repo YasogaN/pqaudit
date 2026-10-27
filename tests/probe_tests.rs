@@ -3,8 +3,8 @@ use pqaudit::probe::handshake::{parse_server_response, ServerResponse};
 #[cfg(feature = "live-tests")]
 #[tokio::test]
 async fn cloudflare_negotiates_pqc() {
-    use pqaudit::probe::pqc_probe::{pqc_probe, ScanConfig};
-    let config = ScanConfig::default();
+    use pqaudit::probe::pqc_probe::{pqc_probe, ProbeConfig};
+    let config = ProbeConfig::default();
     let result = pqc_probe("cloudflare.com", 443, None, &config)
         .await
         .unwrap();

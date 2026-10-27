@@ -202,12 +202,11 @@ pub struct ScanReport {
 pub mod tests_common {
     use crate::audit::{
         cert_chain::CertChainReport,
-        findings::Finding,
         hndl::{HndlAssessment, HndlRating},
         scoring::model::{CategoryScore, ScoringResult},
     };
     use crate::cli::ComplianceMode;
-    use crate::{CipherInventory, DowngradeResult, ScanReport, TargetReport, TlsVersion};
+    use crate::{CipherInventory, DowngradeResult, ScanReport, TargetReport};
 
     fn zero_category(name: &str) -> CategoryScore {
         CategoryScore {
