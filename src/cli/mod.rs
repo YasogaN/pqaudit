@@ -17,7 +17,11 @@ pub enum OutputFormat {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "pqaudit", about = "TLS post-quantum readiness auditor")]
+#[command(
+    name = "pqaudit",
+    version,
+    about = "TLS post-quantum readiness auditor"
+)]
 pub struct Cli {
     /// Hosts to scan: example.com, example.com:8443, smtp://mail.example.com
     pub targets: Vec<String>,

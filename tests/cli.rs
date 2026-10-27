@@ -55,3 +55,13 @@ fn help_exits_zero() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("Usage"));
     assert!(output.stderr.is_empty());
 }
+
+#[test]
+fn version_exits_zero() {
+    let output = pqaudit()
+        .arg("--version")
+        .output()
+        .expect("run pqaudit --version");
+    assert_eq!(output.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&output.stdout).contains(env!("CARGO_PKG_VERSION")));
+}
