@@ -507,6 +507,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn imap_rejects_unexpected_tagged_response() {
+        let (client, mut server) = tokio::io::duplex(4096);
+        server
+            .write_all(b"* OK ready\r\nnonsense\r\n")
+            .await
+            .unwrap();
+        let result = imap_upgrade(client).await;
+        drop(server);
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Imap,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
     async fn imap_upgrade_fails_on_no_response() {
         let (client, mut server) = tokio::io::duplex(4096);
         server
