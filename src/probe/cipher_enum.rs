@@ -50,9 +50,9 @@ async fn run_tls13_pass(
     let mut found = Vec::new();
     while !remaining.is_empty() {
         match probe_with_suites(host, port, sni, scheme, &remaining, timeout_ms, 0x0304).await {
-            // Only accept IDs that are genuinely TLS 1.3 suites — prevents
-            // contamination if the server downgrades to TLS 1.2.
-            Some(id) if is_tls13_suite(id) => {
+            // Only accept suites that were actually offered; a server that
+            // keeps selecting an already-removed suite must not loop forever.
+            Some(id) if remaining.contains(&id) && is_tls13_suite(id) => {
                 found.push(CipherSuite {
                     id,
                     name: cipher_name(id),
@@ -197,6 +197,23 @@ mod tests {
             fixed_response_server(server_hello(0x1302, Some(0x6399), 0x0303, Some(HRR_RANDOM)))
                 .await;
         assert!(probe_kyber_draft("127.0.0.1", server.port(), "localhost", "", 2000).await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enumerate_ciphers_stops_on_unoffered_suite() {
+        use crate::test_support::{fixed_response_server, server_hello};
+
+        // Always answer with 0x1302, even after it has been removed from the
+        // offer. The loop must terminate rather than spinning forever.
+        let server = fixed_response_server(server_hello(0x1302, Some(0x11EC), 0x0303, None)).await;
+        let inv = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            enumerate_ciphers("127.0.0.1", server.port(), "localhost", "", 200),
+        )
+        .await
+        .expect("cipher enumeration looped forever");
+        assert_eq!(inv.tls13_suites.len(), 1);
+        assert_eq!(inv.tls13_suites[0].id, 0x1302);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
