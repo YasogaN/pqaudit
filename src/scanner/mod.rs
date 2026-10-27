@@ -473,12 +473,8 @@ mod tests {
         };
         let findings = generate_findings(&probe, &empty_chain, model.as_ref());
         assert!(
-            !findings.iter().any(|f| matches!(
-                f.kind,
-                FindingKind::ClassicalKeyExchangeOnly { .. }
-                    | FindingKind::HybridKeyExchangeHrrRequired { .. }
-            )),
-            "no key-exchange finding expected for clean PQC"
+            findings.is_empty(),
+            "no findings expected for clean PQC, got {findings:?}"
         );
     }
 
@@ -529,5 +525,346 @@ mod tests {
         assert_eq!(cfg.timeout_ms, 5000);
         assert_eq!(cfg.q_day_year, 2030);
         assert!(!cfg.full_scan);
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use crate::audit::findings::FindingKind;
+    use crate::test_support::{
+        classical_provider, smtp_starttls_server, test_ca_and_leaf, tls_server,
+        tls_server_with_identity,
+    };
+    use crate::{CipherSuite, NamedGroup, PqcHandshakeResult, ProbeResults};
+    use rustls::crypto::aws_lc_rs;
+
+    fn insecure_config() -> ScanConfig {
+        ScanConfig {
+            timeout_ms: 2000,
+            insecure: true,
+            concurrency: 1,
+            ..ScanConfig::default()
+        }
+    }
+
+    fn target(addr: &crate::test_support::TestServer) -> String {
+        format!("127.0.0.1:{}", addr.port())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scan_pqc_server_reports_pqc_and_fallback() {
+        let server = tls_server(
+            aws_lc_rs::default_provider(),
+            &[&rustls::version::TLS13, &rustls::version::TLS12],
+        )
+        .await;
+        let report = scan(vec![target(&server)], &insecure_config()).await;
+        let t = &report.targets[0];
+        assert!(t.error.is_none(), "unexpected error: {:?}", t.error);
+        assert!(t.score.total > 0);
+        assert!(t.negotiated_group.as_ref().unwrap().is_pqc);
+        assert!(t.classical_fallback);
+        assert!(!t.cert_chain.as_ref().unwrap().entries.is_empty());
+        assert!(t
+            .findings
+            .iter()
+            .any(|f| matches!(f.kind, FindingKind::ClassicalFallbackAccepted)));
+        assert!(!t
+            .findings
+            .iter()
+            .any(|f| matches!(f.kind, FindingKind::ClassicalKeyExchangeOnly { .. })));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scan_classical_server_reports_classical_key_exchange() {
+        let server = tls_server(
+            classical_provider(),
+            &[&rustls::version::TLS13, &rustls::version::TLS12],
+        )
+        .await;
+        let report = scan(vec![target(&server)], &insecure_config()).await;
+        let t = &report.targets[0];
+        assert!(!t.negotiated_group.as_ref().unwrap().is_pqc);
+        assert!(t
+            .findings
+            .iter()
+            .any(|f| matches!(f.kind, FindingKind::ClassicalKeyExchangeOnly { .. })));
+        assert!(t
+            .findings
+            .iter()
+            .any(|f| matches!(f.kind, FindingKind::ClassicalFallbackAccepted)));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scan_probe_failure_produces_error_report() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let report = scan(vec![format!("127.0.0.1:{port}")], &insecure_config()).await;
+        let t = &report.targets[0];
+        assert!(t.error.is_some());
+        assert_eq!(t.score.total, 0);
+        assert!(t.cert_chain.is_none());
+        assert!(t.negotiated_group.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scan_full_scan_populates_cipher_inventory() {
+        let server = tls_server(
+            aws_lc_rs::default_provider(),
+            &[&rustls::version::TLS13, &rustls::version::TLS12],
+        )
+        .await;
+        let mut cfg = insecure_config();
+        cfg.full_scan = true;
+        let report = scan(vec![target(&server)], &cfg).await;
+        let inv = report.targets[0]
+            .cipher_inventory
+            .as_ref()
+            .expect("inventory");
+        assert!(!inv.tls13_suites.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scan_starttls_target_succeeds() {
+        let server = smtp_starttls_server(aws_lc_rs::default_provider()).await;
+        let report = scan(
+            vec![format!("smtp://127.0.0.1:{}", server.port())],
+            &insecure_config(),
+        )
+        .await;
+        assert!(report.targets[0].error.is_none());
+        assert!(report.targets[0].negotiated_group.as_ref().unwrap().is_pqc);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scan_ca_file_der_is_used_as_trust_anchor() {
+        let (chain, key, root) = test_ca_and_leaf();
+        let server = tls_server_with_identity(
+            aws_lc_rs::default_provider(),
+            &[&rustls::version::TLS13],
+            chain,
+            key,
+        )
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ca.der");
+        std::fs::write(&path, root.as_ref()).unwrap();
+        let mut cfg = insecure_config();
+        cfg.insecure = false;
+        cfg.sni_override = Some("localhost".into());
+        cfg.ca_file = Some(path);
+        let report = scan(vec![target(&server)], &cfg).await;
+        let t = &report.targets[0];
+        assert!(t.error.is_none(), "unexpected error: {:?}", t.error);
+        assert!(!t
+            .findings
+            .iter()
+            .any(|f| matches!(f.kind, FindingKind::CertificateValidationFailed { .. })));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scan_ca_file_pem_bundle_loads_multiple_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ca.pem");
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/certs/classical-chain.pem"
+            ),
+            &path,
+        )
+        .unwrap();
+        let roots = load_ca_roots(&path).unwrap();
+        assert_eq!(roots.len(), 3);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scan_ca_file_errors_are_reported_per_target() {
+        let mut cfg = insecure_config();
+        cfg.ca_file = Some("/nonexistent/pqaudit-ca.pem".into());
+        let report = scan(vec!["example.com:443".into()], &cfg).await;
+        assert!(report.targets[0].error.is_some());
+        assert!(report.targets[0].error.as_ref().unwrap().contains("ca.pem"));
+    }
+
+    #[test]
+    fn load_ca_roots_rejects_empty_and_invalid_pem() {
+        let dir = tempfile::tempdir().unwrap();
+        let empty = dir.path().join("empty.pem");
+        std::fs::write(
+            &empty,
+            b"-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+        assert!(load_ca_roots(&empty).is_err());
+
+        let invalid = dir.path().join("invalid.pem");
+        std::fs::write(&invalid, b"-----BEGIN CERTIFICATE-----\nnot base64\n").unwrap();
+        assert!(load_ca_roots(&invalid).is_err());
+
+        let missing = dir.path().join("missing.pem");
+        assert!(load_ca_roots(&missing).is_err());
+    }
+
+    #[test]
+    fn scan_config_from_cli_copies_flags() {
+        use crate::cli::Cli;
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "pqaudit",
+            "--insecure",
+            "--ca-file",
+            "ca.pem",
+            "--concurrency",
+            "3",
+            "--full-scan",
+            "--timeout",
+            "1234",
+            "--q-day",
+            "2032",
+            "--compliance",
+            "cnsa2",
+            "example.com",
+        ])
+        .unwrap();
+        let cfg = ScanConfig::from(&cli);
+        assert!(cfg.insecure);
+        assert_eq!(cfg.ca_file.as_deref(), Some(std::path::Path::new("ca.pem")));
+        assert_eq!(cfg.concurrency, 3);
+        assert!(cfg.full_scan);
+        assert_eq!(cfg.timeout_ms, 1234);
+        assert_eq!(cfg.q_day_year, 2032);
+        assert_eq!(cfg.compliance, ComplianceMode::Cnsa2);
+    }
+
+    fn probe_with(
+        group: u16,
+        hrr: bool,
+        fallback: bool,
+        legacy: Vec<TlsVersion>,
+        cert_error: Option<String>,
+        downgrade: DowngradeResult,
+    ) -> ProbeResults {
+        ProbeResults {
+            target: "example.com".into(),
+            port: 443,
+            pqc_handshake: Ok(PqcHandshakeResult {
+                negotiated_version: TlsVersion::Tls13,
+                negotiated_suite: CipherSuite {
+                    id: 0x1302,
+                    name: "TLS_AES_256_GCM_SHA384".into(),
+                },
+                negotiated_group: NamedGroup {
+                    code_point: group,
+                    name: format!("group-{group:04x}"),
+                    is_pqc: group != 0x001D,
+                },
+                hrr_required: hrr,
+                cert_chain_der: vec![],
+                classical_fallback: fallback,
+                legacy_protocols: legacy,
+                certificate_validation_error: cert_error,
+            }),
+            cipher_inventory: Some(crate::CipherInventory {
+                tls13_suites: vec![],
+                tls12_suites: vec![CipherSuite {
+                    id: 0x000A,
+                    name: "TLS_RSA_WITH_3DES_EDE_CBC_SHA".into(),
+                }],
+                kyber_draft_accepted: false,
+            }),
+            downgrade,
+        }
+    }
+
+    #[test]
+    fn generate_findings_handles_failed_handshake() {
+        use crate::audit::cert_chain::CertChainReport;
+        let (_table, model) = compliance_pair(ComplianceMode::Nist);
+        let chain = CertChainReport {
+            entries: vec![],
+            findings: vec![],
+        };
+        let probe = ProbeResults {
+            target: "example.com".into(),
+            port: 443,
+            pqc_handshake: Err("connection refused".into()),
+            cipher_inventory: None,
+            downgrade: DowngradeResult::Rejected,
+        };
+        assert!(generate_findings(&probe, &chain, model.as_ref()).is_empty());
+    }
+
+    #[test]
+    fn generate_findings_covers_all_probe_signals() {
+        use crate::audit::cert_chain::CertChainReport;
+        let (_table, model) = compliance_pair(ComplianceMode::Nist);
+        let chain = CertChainReport {
+            entries: vec![],
+            findings: vec![],
+        };
+
+        let probe = probe_with(
+            0x6399,
+            false,
+            true,
+            vec![TlsVersion::Tls10],
+            Some("untrusted issuer".into()),
+            DowngradeResult::Accepted {
+                negotiated_version: TlsVersion::Tls12,
+            },
+        );
+        let kinds: Vec<FindingKind> = generate_findings(&probe, &chain, model.as_ref())
+            .into_iter()
+            .map(|f| f.kind)
+            .collect();
+        assert!(kinds
+            .iter()
+            .any(|k| matches!(k, FindingKind::DeprecatedPqcDraftCodepoint { .. })));
+        assert!(kinds
+            .iter()
+            .any(|k| matches!(k, FindingKind::ClassicalFallbackAccepted)));
+        assert!(kinds
+            .iter()
+            .any(|k| matches!(k, FindingKind::LegacyTlsProtocol { .. })));
+        assert!(kinds
+            .iter()
+            .any(|k| matches!(k, FindingKind::CertificateValidationFailed { .. })));
+        assert!(kinds
+            .iter()
+            .any(|k| matches!(k, FindingKind::WeakSymmetricCipher { .. })));
+        assert!(kinds
+            .iter()
+            .any(|k| matches!(k, FindingKind::DowngradeAccepted)));
+
+        let probe = probe_with(0x11EC, true, false, vec![], None, DowngradeResult::Rejected);
+        let kinds: Vec<FindingKind> = generate_findings(&probe, &chain, model.as_ref())
+            .into_iter()
+            .map(|f| f.kind)
+            .collect();
+        assert!(kinds
+            .iter()
+            .any(|k| matches!(k, FindingKind::HybridKeyExchangeHrrRequired { .. })));
+
+        let mut probe = probe_with(
+            0x001D,
+            false,
+            false,
+            vec![],
+            None,
+            DowngradeResult::Rejected,
+        );
+        if let Ok(hs) = &mut probe.pqc_handshake {
+            hs.negotiated_version = TlsVersion::Tls12;
+        }
+        let kinds: Vec<FindingKind> = generate_findings(&probe, &chain, model.as_ref())
+            .into_iter()
+            .map(|f| f.kind)
+            .collect();
+        assert!(kinds
+            .iter()
+            .any(|k| matches!(k, FindingKind::TlsVersionInsufficient { .. })));
     }
 }
