@@ -336,8 +336,9 @@ fn generate_findings(
             });
         }
 
-        // Classical fallback: PQC is available but not enforced.
-        if pqc.classical_fallback {
+        // Classical fallback: PQC is available but not enforced. If the
+        // negotiated group is already classical, PQA001 covers it.
+        if pqc.classical_fallback && group.is_pqc {
             let kind = FindingKind::ClassicalFallbackAccepted;
             findings.push(Finding {
                 severity: model.severity(&kind),
@@ -595,7 +596,7 @@ mod integration_tests {
             .findings
             .iter()
             .any(|f| matches!(f.kind, FindingKind::ClassicalKeyExchangeOnly { .. })));
-        assert!(t
+        assert!(!t
             .findings
             .iter()
             .any(|f| matches!(f.kind, FindingKind::ClassicalFallbackAccepted)));
