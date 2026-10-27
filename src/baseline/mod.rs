@@ -137,4 +137,52 @@ mod tests {
             assert_eq!(diff.score_delta, 0);
         }
     }
+
+    #[test]
+    fn diff_reports_ignores_targets_absent_from_baseline() {
+        let mut baseline = stub_scan_report();
+        baseline.targets[0].target = "other.example".into();
+        let diffs = diff_reports(&baseline, &stub_scan_report()).unwrap();
+        assert!(diffs.is_empty());
+    }
+
+    #[test]
+    fn diff_target_reports_new_and_resolved_findings() {
+        use crate::tests_common::stub_scan_report_with_all_findings;
+
+        let mut baseline = stub_scan_report();
+        baseline.targets[0].findings = stub_scan_report_with_all_findings().targets[0]
+            .findings
+            .clone();
+        let current = stub_scan_report();
+        let diff = diff_target(&baseline.targets[0], &current.targets[0]);
+        assert!(diff.resolved_findings.contains(&"PQA001".to_string()));
+        assert!(diff.resolved_findings.contains(&"PQA007".to_string()));
+        assert!(diff.new_findings.is_empty());
+
+        let diff = diff_target(&current.targets[0], &baseline.targets[0]);
+        assert!(diff.new_findings.contains(&"PQA001".to_string()));
+        assert!(diff.resolved_findings.is_empty());
+    }
+
+    #[test]
+    fn load_baseline_handles_valid_missing_and_invalid_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let valid = dir.path().join("baseline.json");
+        std::fs::write(&valid, serde_json::to_vec(&stub_scan_report()).unwrap()).unwrap();
+        assert_eq!(load_baseline(&valid).unwrap().schema_version, "1.0");
+
+        let missing = dir.path().join("missing.json");
+        assert!(matches!(
+            load_baseline(&missing),
+            Err(BaselineDiffError::IoError(_))
+        ));
+
+        let invalid = dir.path().join("invalid.json");
+        std::fs::write(&invalid, b"not json").unwrap();
+        assert!(matches!(
+            load_baseline(&invalid),
+            Err(BaselineDiffError::ParseError(_))
+        ));
+    }
 }

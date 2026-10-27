@@ -252,4 +252,122 @@ mod tests {
             "expected cipher suite name in CBOM"
         );
     }
+
+    fn cert_entry(
+        position: crate::ChainPosition,
+        key: crate::KeyInfo,
+        algorithm: crate::AlgorithmId,
+    ) -> crate::audit::cert_chain::CertEntry {
+        crate::audit::cert_chain::CertEntry {
+            position,
+            key,
+            expiry_year: 2035,
+            not_after: chrono::NaiveDate::from_ymd_opt(2035, 1, 1).unwrap(),
+            subject: "CN=test".into(),
+            algorithm,
+            signature_algorithm: "test".into(),
+            self_signed: false,
+            expired: false,
+        }
+    }
+
+    #[test]
+    fn cbom_covers_all_key_types_and_positions() {
+        use crate::audit::cert_chain::CertChainReport;
+        use crate::{AlgorithmId, ChainPosition, KeyInfo};
+
+        let mut report = stub_scan_report();
+        report.targets[0].negotiated_group = Some(crate::NamedGroup {
+            code_point: 0,
+            name: "none".into(),
+            is_pqc: false,
+        });
+        report.targets[0].negotiated_suite = None;
+        report.targets[0].cipher_inventory = None;
+        report.targets[0].cert_chain = Some(CertChainReport {
+            entries: vec![
+                cert_entry(
+                    ChainPosition::Leaf,
+                    KeyInfo::Rsa { bits: 2048 },
+                    AlgorithmId::Rsa { min_bits: 2048 },
+                ),
+                cert_entry(
+                    ChainPosition::Intermediate { depth: 1 },
+                    KeyInfo::Dsa { bits: 2048 },
+                    AlgorithmId::Dsa { min_bits: 2048 },
+                ),
+                cert_entry(
+                    ChainPosition::Root,
+                    KeyInfo::Ec {
+                        curve: "P-256".into(),
+                    },
+                    AlgorithmId::EcP256,
+                ),
+                cert_entry(ChainPosition::Leaf, KeyInfo::Ed25519, AlgorithmId::Ed25519),
+                cert_entry(ChainPosition::Leaf, KeyInfo::Ed448, AlgorithmId::Ed448),
+                cert_entry(
+                    ChainPosition::Leaf,
+                    KeyInfo::MlKem { level: 768 },
+                    AlgorithmId::MlKem768,
+                ),
+                cert_entry(
+                    ChainPosition::Leaf,
+                    KeyInfo::MlDsa { level: 65 },
+                    AlgorithmId::MlDsa65,
+                ),
+                cert_entry(
+                    ChainPosition::Leaf,
+                    KeyInfo::SlhDsa { level: 1 },
+                    AlgorithmId::SlhDsa { level: 1 },
+                ),
+                cert_entry(ChainPosition::Leaf, KeyInfo::Unknown, AlgorithmId::Unknown),
+            ],
+            findings: vec![],
+        });
+
+        let cbom: serde_json::Value = serde_json::from_str(&render_cbom(&report)).unwrap();
+        let names: Vec<&str> = cbom["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        for expected in [
+            "RSA-2048",
+            "DSA-2048",
+            "EC-P-256",
+            "Ed25519",
+            "Ed448",
+            "ML-KEM-768",
+            "ML-DSA-65",
+            "SLH-DSA-1",
+            "Unknown",
+        ] {
+            assert!(names.contains(&expected), "missing {expected} in {names:?}");
+        }
+    }
+
+    #[test]
+    fn cbom_handles_missing_group_and_chain() {
+        let mut report = stub_scan_report();
+        report.targets[0].negotiated_group = None;
+        report.targets[0].cert_chain = None;
+        report.targets[0].cipher_inventory = None;
+        report.targets[0].negotiated_suite = None;
+        let cbom: serde_json::Value = serde_json::from_str(&render_cbom(&report)).unwrap();
+        assert!(cbom["components"].is_array());
+    }
+
+    #[test]
+    fn cbom_with_no_targets_is_empty() {
+        let report = crate::ScanReport {
+            schema_version: "1.0".into(),
+            scanned_at: "2026-01-01T00:00:00Z".into(),
+            compliance_mode: crate::cli::ComplianceMode::Nist,
+            targets: vec![],
+            comparison: None,
+        };
+        let cbom: serde_json::Value = serde_json::from_str(&render_cbom(&report)).unwrap();
+        assert_eq!(cbom["components"].as_array().unwrap().len(), 0);
+    }
 }

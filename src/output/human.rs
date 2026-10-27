@@ -240,4 +240,112 @@ mod tests {
             "expected 'total' category in comparison"
         );
     }
+
+    #[test]
+    fn human_output_renders_probe_errors() {
+        let mut target = stub_target_report(0);
+        target.error = Some("connection refused".into());
+        let report = ScanReport {
+            schema_version: "1.0".into(),
+            scanned_at: "2026-01-01T00:00:00Z".into(),
+            compliance_mode: ComplianceMode::Nist,
+            targets: vec![target],
+            comparison: None,
+        };
+        let out = render_human(&report, false);
+        assert!(out.contains("ERROR"));
+        assert!(out.contains("connection refused"));
+    }
+
+    #[test]
+    fn human_output_renders_every_severity_icon() {
+        use crate::audit::findings::{Finding, FindingKind, Severity};
+        let mut target = stub_target_report(50);
+        target.findings = vec![
+            Finding {
+                kind: FindingKind::DowngradeAccepted,
+                severity: Severity::Error,
+            },
+            Finding {
+                kind: FindingKind::ClassicalFallbackAccepted,
+                severity: Severity::Warning,
+            },
+            Finding {
+                kind: FindingKind::UnparseableCertificate { depth: 1 },
+                severity: Severity::Note,
+            },
+        ];
+        let report = ScanReport {
+            schema_version: "1.0".into(),
+            scanned_at: "2026-01-01T00:00:00Z".into(),
+            compliance_mode: ComplianceMode::Nist,
+            targets: vec![target],
+            comparison: None,
+        };
+        let out = render_human(&report, false);
+        assert!(out.contains("PQA007"));
+        assert!(out.contains("PQA013"));
+        assert!(out.contains("PQA010"));
+    }
+
+    #[test]
+    fn human_output_renders_every_hndl_rating() {
+        use crate::audit::hndl::HndlRating;
+        for (rating, label) in [
+            (HndlRating::None, "None"),
+            (HndlRating::Low, "Low"),
+            (HndlRating::Medium, "Medium"),
+            (HndlRating::High, "High"),
+            (HndlRating::Critical, "Critical"),
+        ] {
+            let mut target = stub_target_report(50);
+            target.hndl.rating = rating;
+            let report = ScanReport {
+                schema_version: "1.0".into(),
+                scanned_at: "2026-01-01T00:00:00Z".into(),
+                compliance_mode: ComplianceMode::Nist,
+                targets: vec![target],
+                comparison: None,
+            };
+            assert!(render_human(&report, false).contains(label));
+        }
+    }
+
+    #[test]
+    fn human_output_renders_all_compliance_modes() {
+        let report = ScanReport {
+            schema_version: "1.0".into(),
+            scanned_at: "2026-01-01T00:00:00Z".into(),
+            compliance_mode: ComplianceMode::Cnsa2,
+            targets: vec![stub_target_report(50)],
+            comparison: None,
+        };
+        assert!(render_human(&report, false).contains("CNSA 2.0"));
+
+        let report = ScanReport {
+            schema_version: "1.0".into(),
+            scanned_at: "2026-01-01T00:00:00Z".into(),
+            compliance_mode: ComplianceMode::Fips,
+            targets: vec![stub_target_report(50)],
+            comparison: None,
+        };
+        assert!(render_human(&report, false).contains("FIPS Binary Gates"));
+    }
+
+    #[test]
+    fn comparison_truncates_long_target_names() {
+        let mut t1 = stub_target_report(80);
+        t1.target = "a-very-long-target-name-that-exceeds-the-column.example.com".into();
+        let mut t2 = stub_target_report(60);
+        t2.target = "b.example.com".into();
+        let mut report = ScanReport {
+            schema_version: "1.0".into(),
+            scanned_at: "2026-01-01T00:00:00Z".into(),
+            compliance_mode: ComplianceMode::Nist,
+            targets: vec![t1, t2],
+            comparison: None,
+        };
+        report.comparison = Some(build_comparison(&report.clone()));
+        assert!(render_human(&report, true).contains("…"));
+    }
 }

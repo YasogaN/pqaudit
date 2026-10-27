@@ -157,4 +157,18 @@ mod tests {
             "SARIF must not contain comparison key"
         );
     }
+
+    #[test]
+    fn empty_report_has_no_winner() {
+        let report = ScanReport {
+            schema_version: "1.0".into(),
+            scanned_at: "2026-01-01T00:00:00Z".into(),
+            compliance_mode: ComplianceMode::Nist,
+            targets: vec![],
+            comparison: None,
+        };
+        let comparison = build_comparison(&report);
+        assert!(comparison.targets.is_empty());
+        assert!(comparison.categories.iter().all(|c| c.winner.is_none()));
+    }
 }

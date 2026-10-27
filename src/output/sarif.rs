@@ -227,4 +227,20 @@ mod tests {
             .unwrap();
         assert!(uri.starts_with("tls://"), "location URI should be tls://");
     }
+
+    #[test]
+    fn sarif_maps_note_severity() {
+        use crate::audit::findings::{Finding, FindingKind, Severity};
+        let mut report = stub_scan_report();
+        report.targets[0].findings = vec![Finding {
+            kind: FindingKind::ClassicalCertificate {
+                position: crate::ChainPosition::Leaf,
+                key: crate::KeyInfo::Rsa { bits: 2048 },
+                deadline: 2035,
+            },
+            severity: Severity::Note,
+        }];
+        let sarif: serde_json::Value = serde_json::from_str(&render_sarif(&report)).unwrap();
+        assert_eq!(sarif["runs"][0]["results"][0]["level"], "note");
+    }
 }
