@@ -117,8 +117,9 @@ pub fn parse_algorithm_id(spki: &SubjectPublicKeyInfo) -> Option<AlgorithmId> {
             Some("P-256") => Some(AlgorithmId::EcP256),
             Some("P-384") => Some(AlgorithmId::EcP384),
             Some("P-521") => Some(AlgorithmId::EcP521),
-            Some(_) => Some(AlgorithmId::EcOther),
-            None => None,
+            // Unknown curves and explicit-parameter EC keys are still
+            // quantum-vulnerable; classify them conservatively.
+            _ => Some(AlgorithmId::EcOther),
         },
         OID_DSA => Some(AlgorithmId::Dsa {
             min_bits: spki.parsed().ok().map(|k| k.key_size() as u32).unwrap_or(0),
