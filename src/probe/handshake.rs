@@ -41,10 +41,8 @@ pub fn parse_server_response(bytes: &[u8]) -> Result<ServerResponse, String> {
 }
 
 fn parse_server_hello(bytes: &[u8]) -> Result<ServerResponse, String> {
-    // TLS record header: type(1) + version(2) + length(2) = 5 bytes
-    if bytes.len() < 5 {
-        return Err("record too short".into());
-    }
+    // TLS record header: type(1) + version(2) + length(2) = 5 bytes.
+    // The public entry point already rejects inputs shorter than 5 bytes.
     let record_len = u16::from_be_bytes([bytes[3], bytes[4]]) as usize;
     if bytes.len() < 5 + record_len {
         return Err("record truncated".into());
@@ -290,11 +288,15 @@ pub fn build_client_hello_legacy(
     build_hello(sni, cipher_suites, named_groups, version, false, version)
 }
 
+/// Error returned while reading a TLS record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadError {
+    Timeout,
+    ConnectionClose,
+}
+
 /// Read one complete TLS record from `stream`.
-///
-/// Returns `Err(Timeout)` or `Err(ConnectionClose)` if no complete record
-/// arrives before the deadline.
-pub async fn read_tls_record<S>(stream: &mut S, timeout_ms: u64) -> Result<Vec<u8>, ServerResponse>
+pub async fn read_tls_record<S>(stream: &mut S, timeout_ms: u64) -> Result<Vec<u8>, ReadError>
 where
     S: AsyncRead + Unpin,
 {
@@ -312,16 +314,31 @@ where
         }
         let remaining = match deadline.checked_duration_since(Instant::now()) {
             Some(d) => d,
-            None => return Err(ServerResponse::Timeout),
+            None => return Err(ReadError::Timeout),
         };
         let mut chunk = [0u8; 4096];
         match tokio::time::timeout(remaining, stream.read(&mut chunk)).await {
-            Ok(Ok(0)) => return Err(ServerResponse::ConnectionClose),
+            Ok(Ok(0)) => return Err(ReadError::ConnectionClose),
             Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
-            Ok(Err(_)) => return Err(ServerResponse::ConnectionClose),
-            Err(_) => return Err(ServerResponse::Timeout),
+            Ok(Err(_)) => return Err(ReadError::ConnectionClose),
+            Err(_) => return Err(ReadError::Timeout),
         }
     }
+}
+
+/// Send a ClientHello and return the raw response record bytes.
+pub async fn send_and_read_raw<S>(
+    stream: &mut S,
+    hello: &[u8],
+    timeout_ms: u64,
+) -> Result<Vec<u8>, ReadError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    if stream.write_all(hello).await.is_err() {
+        return Err(ReadError::ConnectionClose);
+    }
+    read_tls_record(stream, timeout_ms).await
 }
 
 /// Send a ClientHello and classify the response.
@@ -329,12 +346,10 @@ pub async fn send_and_receive<S>(stream: &mut S, hello: &[u8], timeout_ms: u64) 
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    if stream.write_all(hello).await.is_err() {
-        return ServerResponse::ConnectionClose;
-    }
-    match read_tls_record(stream, timeout_ms).await {
+    match send_and_read_raw(stream, hello, timeout_ms).await {
         Ok(buf) => parse_server_response(&buf).unwrap_or(ServerResponse::ConnectionClose),
-        Err(response) => response,
+        Err(ReadError::Timeout) => ServerResponse::Timeout,
+        Err(ReadError::ConnectionClose) => ServerResponse::ConnectionClose,
     }
 }
 
@@ -428,34 +443,27 @@ mod tests {
     #[test]
     fn parses_server_hello_with_key_share_group() {
         let bytes = server_hello_bytes(0x1302, Some(0x11EC));
-        match parse_server_response(&bytes).unwrap() {
+        assert!(matches!(
+            parse_server_response(&bytes).unwrap(),
             ServerResponse::ServerHello {
-                selected_suite,
-                selected_group,
-                tls_version,
-            } => {
-                assert_eq!(selected_suite, 0x1302);
-                assert_eq!(selected_group, Some(0x11EC));
-                assert_eq!(tls_version, 0x0303);
+                selected_suite: 0x1302,
+                selected_group: Some(0x11EC),
+                tls_version: 0x0303,
             }
-            other => panic!("expected ServerHello, got {other:?}"),
-        }
+        ));
     }
 
     #[test]
     fn parses_server_hello_without_extensions() {
         let bytes = server_hello_bytes(0x1301, None);
-        match parse_server_response(&bytes).unwrap() {
+        assert!(matches!(
+            parse_server_response(&bytes).unwrap(),
             ServerResponse::ServerHello {
-                selected_suite,
-                selected_group,
+                selected_suite: 0x1301,
+                selected_group: None,
                 ..
-            } => {
-                assert_eq!(selected_suite, 0x1301);
-                assert_eq!(selected_group, None);
             }
-            other => panic!("expected ServerHello, got {other:?}"),
-        }
+        ));
     }
 
     #[test]
@@ -515,10 +523,13 @@ mod tests {
         hs.extend_from_slice(&body);
         let mut rec = vec![0x16, 0x03, 0x03, 0, hs.len() as u8];
         rec.extend_from_slice(&hs);
-        match parse_server_response(&rec).unwrap() {
-            ServerResponse::ServerHello { selected_group, .. } => assert_eq!(selected_group, None),
-            other => panic!("expected ServerHello, got {other:?}"),
-        }
+        assert!(matches!(
+            parse_server_response(&rec).unwrap(),
+            ServerResponse::ServerHello {
+                selected_group: None,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -575,7 +586,7 @@ mod tests {
         let (mut client, _server) = tokio::io::duplex(64);
         assert!(matches!(
             read_tls_record(&mut client, 1).await,
-            Err(ServerResponse::Timeout)
+            Err(ReadError::Timeout)
         ));
     }
 
@@ -585,7 +596,7 @@ mod tests {
         drop(server);
         assert!(matches!(
             read_tls_record(&mut client, 1000).await,
-            Err(ServerResponse::ConnectionClose)
+            Err(ReadError::ConnectionClose)
         ));
     }
 
@@ -632,5 +643,104 @@ mod tests {
             probe_once(&mut client, b"hello", 1000).await,
             ServerResponse::ServerHello { .. }
         ));
+    }
+
+    fn wrap_record(hs: Vec<u8>) -> Vec<u8> {
+        let mut rec = vec![0x16, 0x03, 0x03, 0, hs.len() as u8];
+        rec.extend_from_slice(&hs);
+        rec
+    }
+
+    #[test]
+    fn server_hello_without_extensions_length_is_accepted() {
+        // TLS allows the extensions block to be absent entirely.
+        let mut body = vec![0x03, 0x03];
+        body.extend(std::iter::repeat_n(0u8, 32));
+        body.push(0);
+        body.extend_from_slice(&0x1302u16.to_be_bytes());
+        body.push(0);
+        let mut hs = vec![0x02, 0, 0, body.len() as u8];
+        hs.extend_from_slice(&body);
+        assert!(matches!(
+            parse_server_response(&wrap_record(hs)).unwrap(),
+            ServerResponse::ServerHello {
+                selected_group: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn malformed_extensions_length_is_ignored() {
+        let mut body = vec![0x03, 0x03];
+        body.extend(std::iter::repeat_n(0u8, 32));
+        body.push(0);
+        body.extend_from_slice(&0x1302u16.to_be_bytes());
+        body.push(0);
+        // Claim 10 bytes of extensions but provide only 4.
+        body.extend_from_slice(&10u16.to_be_bytes());
+        body.extend_from_slice(&0x0033u16.to_be_bytes());
+        body.extend_from_slice(&0u16.to_be_bytes());
+        let mut hs = vec![0x02, 0, 0, body.len() as u8];
+        hs.extend_from_slice(&body);
+        assert!(matches!(
+            parse_server_response(&wrap_record(hs)).unwrap(),
+            ServerResponse::ServerHello {
+                selected_group: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn key_share_falls_back_when_x25519_is_not_offered() {
+        let hello = build_client_hello("example.com", &[0x1301], &[0x6399], 0x0304);
+        let pos = hello
+            .windows(2)
+            .position(|w| w == 0x0033u16.to_be_bytes())
+            .expect("key_share extension present");
+        // extension type(2) length(2) list length(2) group(2)
+        let group = u16::from_be_bytes([hello[pos + 6], hello[pos + 7]]);
+        assert_eq!(group, 0x6399);
+    }
+
+    #[tokio::test]
+    async fn read_tls_record_zero_timeout_reports_timeout() {
+        let (mut client, _server) = tokio::io::duplex(64);
+        assert_eq!(
+            read_tls_record(&mut client, 0).await,
+            Err(ReadError::Timeout)
+        );
+    }
+
+    struct FailingReader;
+
+    impl tokio::io::AsyncRead for FailingReader {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Err(std::io::Error::other("read boom")))
+        }
+    }
+
+    #[tokio::test]
+    async fn read_tls_record_reports_read_errors() {
+        let mut reader = FailingReader;
+        assert_eq!(
+            read_tls_record(&mut reader, 100).await,
+            Err(ReadError::ConnectionClose)
+        );
+    }
+
+    #[tokio::test]
+    async fn send_and_read_raw_reports_write_failure() {
+        let (mut client, server) = tokio::io::duplex(64);
+        drop(server);
+        assert_eq!(
+            send_and_read_raw(&mut client, b"hello", 100).await,
+            Err(ReadError::ConnectionClose)
+        );
     }
 }
