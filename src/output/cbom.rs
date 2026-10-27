@@ -126,10 +126,13 @@ fn key_info_to_alg_name(key: &crate::KeyInfo) -> String {
     use crate::KeyInfo;
     match key {
         KeyInfo::Rsa { bits } => format!("RSA-{}", bits),
+        KeyInfo::Dsa { bits } => format!("DSA-{}", bits),
         KeyInfo::Ec { curve } => format!("EC-{}", curve),
         KeyInfo::Ed25519 => "Ed25519".into(),
         KeyInfo::Ed448 => "Ed448".into(),
+        KeyInfo::MlKem { level } => format!("ML-KEM-{}", level),
         KeyInfo::MlDsa { level } => format!("ML-DSA-{}", level),
+        KeyInfo::SlhDsa { level } => format!("SLH-DSA-{}", level),
         KeyInfo::Unknown => "Unknown".into(),
     }
 }
@@ -139,10 +142,13 @@ fn key_info_to_primitive(key: &crate::KeyInfo) -> &'static str {
     use crate::KeyInfo;
     match key {
         KeyInfo::Rsa { .. } => "signature",
+        KeyInfo::Dsa { .. } => "signature",
         KeyInfo::Ec { .. } => "signature",
         KeyInfo::Ed25519 => "signature",
         KeyInfo::Ed448 => "signature",
+        KeyInfo::MlKem { .. } => "kem",
         KeyInfo::MlDsa { .. } => "signature",
+        KeyInfo::SlhDsa { .. } => "signature",
         KeyInfo::Unknown => "unknown",
     }
 }

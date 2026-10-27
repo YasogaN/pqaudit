@@ -52,10 +52,13 @@ pub struct CipherSuite {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KeyInfo {
     Rsa { bits: u32 },
+    Dsa { bits: u32 },
     Ec { curve: String },
     Ed25519,
     Ed448,
+    MlKem { level: u8 },
     MlDsa { level: u8 },
+    SlhDsa { level: u8 },
     Unknown,
 }
 
@@ -71,6 +74,7 @@ pub enum ChainPosition {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AlgorithmId {
     Rsa { min_bits: u32 },
+    Dsa { min_bits: u32 },
     EcP256,
     EcP384,
     EcP521,
@@ -79,16 +83,69 @@ pub enum AlgorithmId {
     Ed25519,
     Ed448,
     Dh { min_bits: u32 },
+    MlKem512,
     MlKem768,
     MlKem1024,
+    MlDsa44,
     MlDsa65,
     MlDsa87,
+    SlhDsa { level: u8 },
     Aes128,
     Aes256,
     Sha256,
     Sha384,
     Sha512,
     ChaCha20Poly1305,
+    Unknown,
+}
+
+impl AlgorithmId {
+    /// True for algorithms standardised by FIPS 203/204/205.
+    pub fn is_pqc(&self) -> bool {
+        matches!(
+            self,
+            Self::MlKem512
+                | Self::MlKem768
+                | Self::MlKem1024
+                | Self::MlDsa44
+                | Self::MlDsa65
+                | Self::MlDsa87
+                | Self::SlhDsa { .. }
+        )
+    }
+
+    /// True for public-key algorithms broken by Shor's algorithm.
+    pub fn is_classical(&self) -> bool {
+        matches!(
+            self,
+            Self::Rsa { .. }
+                | Self::Dsa { .. }
+                | Self::EcP256
+                | Self::EcP384
+                | Self::EcP521
+                | Self::X25519
+                | Self::X448
+                | Self::Ed25519
+                | Self::Ed448
+                | Self::Dh { .. }
+        )
+    }
+}
+
+impl KeyInfo {
+    pub fn is_pqc(&self) -> bool {
+        matches!(
+            self,
+            Self::MlKem { .. } | Self::MlDsa { .. } | Self::SlhDsa { .. }
+        )
+    }
+
+    pub fn is_classical(&self) -> bool {
+        matches!(
+            self,
+            Self::Rsa { .. } | Self::Dsa { .. } | Self::Ec { .. } | Self::Ed25519 | Self::Ed448
+        )
+    }
 }
 
 // ── Probe results ─────────────────────────────────────────────────────────────
