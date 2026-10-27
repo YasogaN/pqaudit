@@ -20,7 +20,6 @@ pub enum OutputFormat {
 #[command(name = "pqaudit", about = "TLS post-quantum readiness auditor")]
 pub struct Cli {
     /// Hosts to scan: example.com, example.com:8443, smtp://mail.example.com
-    #[arg(required_unless_present = "targets_file")]
     pub targets: Vec<String>,
 
     // Scan behavior
