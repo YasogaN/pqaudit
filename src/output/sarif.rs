@@ -79,6 +79,24 @@ fn rule_definitions() -> Value {
             "name": "ExpiredCertificate",
             "shortDescription": { "text": "A certificate in the server chain has expired." },
             "helpUri": "https://www.rfc-editor.org/rfc/rfc5280"
+        },
+        {
+            "id": "PQA013",
+            "name": "ClassicalFallbackAccepted",
+            "shortDescription": { "text": "Server accepts a classical-only TLS 1.3 key exchange, so PQC is not enforced." },
+            "helpUri": "https://csrc.nist.gov/pubs/ir/8547/ipd"
+        },
+        {
+            "id": "PQA014",
+            "name": "LegacyTlsProtocol",
+            "shortDescription": { "text": "Server accepts TLS 1.0 or TLS 1.1." },
+            "helpUri": "https://csrc.nist.gov/pubs/sp/800/52/r2/final"
+        },
+        {
+            "id": "PQA015",
+            "name": "CertificateValidationFailed",
+            "shortDescription": { "text": "Certificate chain validation failed; the chain was captured without trust validation." },
+            "helpUri": "https://www.rfc-editor.org/rfc/rfc5280"
         }
     ])
 }
@@ -183,7 +201,7 @@ mod tests {
             .collect();
         assert!(rules.contains(&"PQA001"), "PQA001 missing from rules");
         assert!(rules.contains(&"PQA007"), "PQA007 missing from rules");
-        assert_eq!(rules.len(), 12, "expected all 12 PQA rules");
+        assert_eq!(rules.len(), 15, "expected all 15 PQA rules");
     }
 
     #[test]

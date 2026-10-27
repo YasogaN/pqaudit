@@ -50,6 +50,13 @@ pub enum FindingKind {
         position: ChainPosition,
         expiry: NaiveDate,
     },
+    ClassicalFallbackAccepted,
+    LegacyTlsProtocol {
+        version: TlsVersion,
+    },
+    CertificateValidationFailed {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,6 +120,16 @@ impl fmt::Display for FindingKind {
             Self::ExpiredCertificate { position, expiry } => {
                 write!(f, "Certificate ({:?}) expired on {}", position, expiry)
             }
+            Self::ClassicalFallbackAccepted => write!(
+                f,
+                "Server accepts a classical-only TLS 1.3 key exchange (PQC is not enforced)"
+            ),
+            Self::LegacyTlsProtocol { version } => {
+                write!(f, "Server accepts legacy protocol {}", version)
+            }
+            Self::CertificateValidationFailed { reason } => {
+                write!(f, "Certificate chain validation failed: {}", reason)
+            }
         }
     }
 }
@@ -137,6 +154,9 @@ impl Finding {
             FindingKind::UnparseableCertificate { .. } => "PQA010",
             FindingKind::WeakCertificateSignature { .. } => "PQA011",
             FindingKind::ExpiredCertificate { .. } => "PQA012",
+            FindingKind::ClassicalFallbackAccepted => "PQA013",
+            FindingKind::LegacyTlsProtocol { .. } => "PQA014",
+            FindingKind::CertificateValidationFailed { .. } => "PQA015",
         }
     }
 }

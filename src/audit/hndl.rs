@@ -54,8 +54,8 @@ impl HndlModel for DefaultHndlModel {
             .is_some_and(|y| y < config.q_day_year);
 
         let is_pure_pqc = matches!(group_code, 0x0200..=0x0202);
-        // 0x6399 (Kyber Draft) is excluded — pre-FIPS draft is not considered sufficient HNDL protection
-        let is_hybrid_pqc = matches!(group_code, 0x11EB..=0x11ED);
+        // Exclude 0x6399/0x639A (pre-FIPS Kyber draft) from HNDL protection.
+        let is_hybrid_pqc = matches!(group_code, 0x11E9..=0x11EE);
 
         let rating = if is_pure_pqc {
             HndlRating::None
@@ -115,6 +115,9 @@ mod tests {
                 },
                 hrr_required: false,
                 cert_chain_der: vec![],
+                classical_fallback: false,
+                legacy_protocols: vec![],
+                certificate_validation_error: None,
             }),
             cipher_inventory: None,
             downgrade: DowngradeResult::Rejected,

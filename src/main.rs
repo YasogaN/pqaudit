@@ -212,6 +212,8 @@ mod tests {
             error,
             negotiated_group: None,
             negotiated_suite: None,
+            classical_fallback: false,
+            legacy_protocols: vec![],
         }
     }
 

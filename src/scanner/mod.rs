@@ -25,6 +25,7 @@ pub struct ScanConfig {
     pub sni_override: Option<String>,
     pub q_day_year: u32,
     pub compliance: ComplianceMode,
+    pub insecure: bool,
 }
 
 impl From<&Cli> for ScanConfig {
@@ -36,6 +37,7 @@ impl From<&Cli> for ScanConfig {
             sni_override: cli.sni.clone(),
             q_day_year: cli.q_day,
             compliance: cli.compliance.clone(),
+            insecure: cli.insecure,
         }
     }
 }
@@ -49,6 +51,7 @@ impl Default for ScanConfig {
             sni_override: None,
             q_day_year: 2030,
             compliance: ComplianceMode::Nist,
+            insecure: false,
         }
     }
 }
@@ -86,17 +89,19 @@ async fn scan_single(target: String, config: &ScanConfig) -> TargetReport {
     let probe_cfg = ProbeConfig {
         timeout_ms,
         sni_override: config.sni_override.clone(),
+        scheme: parsed.scheme.clone(),
+        insecure: config.insecure,
     };
 
     // Run PQC probe and downgrade probe concurrently.
     let (pqc_result, downgrade) = tokio::join!(
         pqc_probe(&host, port, Some(&sni), &probe_cfg),
-        probe_downgrade(&host, port, timeout_ms),
+        probe_downgrade(&host, port, &parsed.scheme, timeout_ms),
     );
 
     // Cipher enumeration only when --full-scan is requested.
     let cipher_inventory = if config.full_scan {
-        Some(enumerate_ciphers(&host, port, timeout_ms).await)
+        Some(enumerate_ciphers(&host, port, &parsed.scheme, timeout_ms).await)
     } else {
         None
     };
@@ -133,6 +138,8 @@ async fn scan_single(target: String, config: &ScanConfig) -> TargetReport {
                 error: Some(e.to_string()),
                 negotiated_group: None,
                 negotiated_suite: None,
+                classical_fallback: false,
+                legacy_protocols: vec![],
             }
         }
         Ok(pqc) => {
@@ -177,6 +184,8 @@ async fn scan_single(target: String, config: &ScanConfig) -> TargetReport {
                 error: None,
                 negotiated_group: Some(pqc.negotiated_group),
                 negotiated_suite: Some(pqc.negotiated_suite),
+                classical_fallback: pqc.classical_fallback,
+                legacy_protocols: pqc.legacy_protocols.clone(),
             }
         }
     }
@@ -232,10 +241,41 @@ fn generate_findings(
             });
         }
 
+        // Classical fallback: PQC is available but not enforced.
+        if pqc.classical_fallback {
+            let kind = FindingKind::ClassicalFallbackAccepted;
+            findings.push(Finding {
+                severity: model.severity(&kind),
+                kind,
+            });
+        }
+
+        // Legacy protocol versions accepted by the server.
+        for version in &pqc.legacy_protocols {
+            let kind = FindingKind::LegacyTlsProtocol {
+                version: version.clone(),
+            };
+            findings.push(Finding {
+                severity: model.severity(&kind),
+                kind,
+            });
+        }
+
+        // Certificate validation was not possible; the chain was captured insecurely.
+        if let Some(reason) = &pqc.certificate_validation_error {
+            let kind = FindingKind::CertificateValidationFailed {
+                reason: reason.clone(),
+            };
+            findings.push(Finding {
+                severity: model.severity(&kind),
+                kind,
+            });
+        }
+
         // Weak cipher suites from inventory
         if let Some(inv) = &probe.cipher_inventory {
             for suite in inv.tls12_suites.iter().chain(inv.tls13_suites.iter()) {
-                if is_weak_cipher(suite.id) {
+                if crate::audit::tables::iana_ciphers::is_weak_cipher(suite.id) {
                     let kind = FindingKind::WeakSymmetricCipher {
                         suite: suite.clone(),
                     };
@@ -266,17 +306,6 @@ fn generate_findings(
     }
 
     findings
-}
-
-/// Returns true for cipher suite IDs considered weak or deprecated.
-fn is_weak_cipher(id: u16) -> bool {
-    matches!(
-        id,
-        0x000A        // TLS_RSA_WITH_3DES_EDE_CBC_SHA
-        | 0x0000
-            ..=0x0003  // NULL / export ciphers
-        | 0x0004 | 0x0005 // RC4-MD5 / RC4-SHA
-    )
 }
 
 /// Extension trait for chrono Year from UTC
@@ -318,6 +347,9 @@ mod tests {
                 },
                 hrr_required: hrr,
                 cert_chain_der: vec![],
+                classical_fallback: false,
+                legacy_protocols: vec![],
+                certificate_validation_error: None,
             }),
             cipher_inventory: None,
             downgrade,

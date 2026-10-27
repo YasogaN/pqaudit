@@ -1,8 +1,26 @@
 use crate::audit::cert_chain::CertChainReport;
 use crate::audit::findings::{FindingKind, Severity};
 use crate::audit::tables::DeadlineTable;
-use crate::ProbeResults;
+use crate::{DowngradeResult, ProbeResults, TlsVersion};
 use serde::{Deserialize, Serialize};
+
+/// Downgrade posture is worth 5 points only when the server rejects TLS 1.2
+/// downgrades, does not accept a classical-only TLS 1.3 key exchange, and does
+/// not accept legacy TLS 1.0/1.1.
+pub fn downgrade_points(
+    downgrade: &DowngradeResult,
+    classical_fallback: bool,
+    legacy_protocols: &[TlsVersion],
+) -> u8 {
+    if matches!(downgrade, DowngradeResult::Rejected)
+        && !classical_fallback
+        && legacy_protocols.is_empty()
+    {
+        5
+    } else {
+        0
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CategoryScore {

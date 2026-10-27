@@ -1,6 +1,5 @@
-use crate::probe::handshake::{build_client_hello, parse_server_response, ServerResponse};
+use crate::probe::handshake::{build_client_hello, send_and_receive, ServerResponse};
 use crate::{DowngradeResult, TlsVersion};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 // Classical-only groups (no PQC)
 const CLASSICAL_GROUPS: &[u16] = &[0x001D, 0x0017, 0x0018];
@@ -11,21 +10,11 @@ const CLASSICAL_SUITES: &[u16] = &[
     0x003D, 0x003C, 0x002F, 0x0035, // RSA-AES/3DES
 ];
 
-fn tls_version_from_u16(v: u16) -> TlsVersion {
-    match v {
-        0x0304 => TlsVersion::Tls13,
-        0x0303 => TlsVersion::Tls12,
-        0x0302 => TlsVersion::Tls11,
-        0x0301 => TlsVersion::Tls10,
-        other => TlsVersion::Unknown(other),
-    }
-}
-
 /// Classify a ServerResponse as a DowngradeResult.
 pub fn classify_downgrade(response: &ServerResponse) -> DowngradeResult {
     match response {
         ServerResponse::ServerHello { tls_version, .. } => DowngradeResult::Accepted {
-            negotiated_version: tls_version_from_u16(*tls_version),
+            negotiated_version: TlsVersion::from_code(*tls_version),
         },
         ServerResponse::Timeout => DowngradeResult::Timeout,
         ServerResponse::HandshakeFailure | ServerResponse::ConnectionClose => {
@@ -36,41 +25,19 @@ pub fn classify_downgrade(response: &ServerResponse) -> DowngradeResult {
 
 /// Send a TLS 1.2-only ClientHello and classify the response.
 /// A ServerHello means the server accepted a downgrade to TLS 1.2.
-pub async fn probe_downgrade(host: &str, port: u16, timeout_ms: u64) -> DowngradeResult {
+pub async fn probe_downgrade(
+    host: &str,
+    port: u16,
+    scheme: &str,
+    timeout_ms: u64,
+) -> DowngradeResult {
     let hello = build_client_hello(host, CLASSICAL_SUITES, CLASSICAL_GROUPS, 0x0303);
-    let mut stream = match crate::probe::tcp_connect(host, port, timeout_ms).await {
+    let mut stream = match crate::probe::connect(host, port, scheme, timeout_ms).await {
         Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => return DowngradeResult::Timeout,
+        Err(crate::ProbeError::Timeout { .. }) => return DowngradeResult::Timeout,
         Err(_) => return DowngradeResult::Rejected,
     };
-    if stream.write_all(&hello).await.is_err() {
-        return DowngradeResult::Rejected;
-    }
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(timeout_ms);
-    let mut buf = Vec::with_capacity(4096);
-    loop {
-        let need = if buf.len() >= 5 {
-            5 + u16::from_be_bytes([buf[3], buf[4]]) as usize
-        } else {
-            5
-        };
-        if buf.len() >= need {
-            break;
-        }
-        let remaining = match deadline.checked_duration_since(tokio::time::Instant::now()) {
-            Some(d) => d,
-            None => return DowngradeResult::Timeout,
-        };
-        let mut chunk = [0u8; 4096];
-        match tokio::time::timeout(remaining, stream.read(&mut chunk)).await {
-            Ok(Ok(0)) | Ok(Err(_)) => return DowngradeResult::Rejected,
-            Err(_) => return DowngradeResult::Timeout,
-            Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
-        }
-    }
-    parse_server_response(&buf)
-        .map(|r| classify_downgrade(&r))
-        .unwrap_or(DowngradeResult::Rejected)
+    classify_downgrade(&send_and_receive(&mut stream, &hello, timeout_ms).await)
 }
 
 #[cfg(test)]
@@ -127,5 +94,20 @@ mod tests {
             }
             other => panic!("expected Accepted, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn server_hello_tls11_negotiated_version() {
+        let r = ServerResponse::ServerHello {
+            selected_suite: 0x002F,
+            selected_group: None,
+            tls_version: 0x0302,
+        };
+        assert_eq!(
+            classify_downgrade(&r),
+            DowngradeResult::Accepted {
+                negotiated_version: TlsVersion::Tls11
+            }
+        );
     }
 }

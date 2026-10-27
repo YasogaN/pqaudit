@@ -21,6 +21,22 @@ pub enum TlsVersion {
     Unknown(u16),
 }
 
+impl TlsVersion {
+    pub fn from_code(value: u16) -> Self {
+        match value {
+            0x0304 => Self::Tls13,
+            0x0303 => Self::Tls12,
+            0x0302 => Self::Tls11,
+            0x0301 => Self::Tls10,
+            other => Self::Unknown(other),
+        }
+    }
+
+    pub fn is_legacy(&self) -> bool {
+        matches!(self, Self::Tls10 | Self::Tls11)
+    }
+}
+
 impl fmt::Display for TlsVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -158,6 +174,17 @@ pub struct PqcHandshakeResult {
     pub negotiated_group: NamedGroup,
     pub hrr_required: bool,
     pub cert_chain_der: Vec<Vec<u8>>,
+    /// True when the server also completes a TLS 1.3 handshake using only
+    /// classical key-exchange groups.
+    #[serde(default)]
+    pub classical_fallback: bool,
+    /// Legacy TLS versions accepted by the server (TLS 1.0/1.1).
+    #[serde(default)]
+    pub legacy_protocols: Vec<TlsVersion>,
+    /// Set when the verified handshake failed and the probe retried without
+    /// certificate validation so the certificate could still be audited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate_validation_error: Option<String>,
 }
 
 /// Results from active cipher enumeration (--full-scan).
@@ -225,6 +252,10 @@ pub enum StarttlsProtocol {
 
 // ── Scan report ───────────────────────────────────────────────────────────────
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetReport {
     pub target: String,
@@ -242,6 +273,12 @@ pub struct TargetReport {
     /// Negotiated cipher suite from the PQC handshake probe.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub negotiated_suite: Option<CipherSuite>,
+    /// True when the server accepts a classical-only TLS 1.3 key exchange.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub classical_fallback: bool,
+    /// Legacy TLS versions accepted by the server.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub legacy_protocols: Vec<TlsVersion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -317,6 +354,8 @@ pub mod tests_common {
                 id: 0x1302,
                 name: "TLS_AES_256_GCM_SHA384".into(),
             }),
+            classical_fallback: false,
+            legacy_protocols: vec![],
         }
     }
 

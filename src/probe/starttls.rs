@@ -43,11 +43,18 @@ pub fn parse_scheme(target: &str) -> ParsedTarget {
     }
 }
 
+fn strip_brackets(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host)
+}
+
 fn split_host_port(s: &str, default_port: u16) -> (&str, u16) {
     if s.starts_with('[') {
-        // IPv6 literal: "[::1]:443" or "[::1]"
+        // IPv6 literal: "[::1]:443" or "[::1]". Strip the brackets so the host
+        // can be passed to DNS resolution and SNI.
         if let Some(bracket_pos) = s.find(']') {
-            let host = &s[..=bracket_pos];
+            let host = strip_brackets(&s[..=bracket_pos]);
             let rest = &s[bracket_pos + 1..];
             if let Some(port_str) = rest.strip_prefix(':') {
                 return (host, port_str.parse().unwrap_or(default_port));

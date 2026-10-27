@@ -5,6 +5,43 @@ pub mod hrr;
 pub mod pqc_probe;
 pub mod starttls;
 
+use crate::ProbeError;
+
+/// Map a TCP connect error to a structured probe error.
+pub(crate) fn map_connect_error(
+    e: std::io::Error,
+    host: &str,
+    port: u16,
+    timeout_ms: u64,
+) -> ProbeError {
+    use std::io::ErrorKind;
+    match e.kind() {
+        ErrorKind::TimedOut => ProbeError::Timeout {
+            after_ms: timeout_ms,
+        },
+        ErrorKind::NotFound | ErrorKind::AddrNotAvailable => ProbeError::DnsResolutionFailed {
+            host: host.to_string(),
+        },
+        _ => ProbeError::ConnectionRefused {
+            host: host.to_string(),
+            port,
+        },
+    }
+}
+
+/// Open a TCP connection and perform STARTTLS if the scheme requires it.
+pub(crate) async fn connect(
+    host: &str,
+    port: u16,
+    scheme: &str,
+    timeout_ms: u64,
+) -> Result<tokio::net::TcpStream, ProbeError> {
+    let stream = tcp_connect(host, port, timeout_ms)
+        .await
+        .map_err(|e| map_connect_error(e, host, port, timeout_ms))?;
+    starttls::upgrade_to_tls(scheme, stream, port).await
+}
+
 /// Connect to `host:port` with per-address fallback.
 ///
 /// Resolves the hostname to all IP addresses and tries each one with a

@@ -2,7 +2,7 @@ use crate::audit::cert_chain::{cert_chain_notes, cert_chain_points, CertChainRep
 use crate::audit::findings::{FindingKind, Severity};
 use crate::audit::scoring::model::{CategoryScore, ScoringModel, ScoringResult};
 use crate::audit::tables::DeadlineTable;
-use crate::{DowngradeResult, ProbeResults, TlsVersion};
+use crate::{ProbeResults, TlsVersion};
 
 pub struct Cnsa2StrictModel;
 
@@ -12,6 +12,9 @@ fn cnsa2_key_exchange_points(code_point: u16) -> u8 {
         0x0201 => 35,          // ML-KEM-768 (below CNSA 2.0 recommended level)
         0x11EC => 30,          // X25519MLKEM768
         0x11EB => 25,          // SecP256r1MLKEM768
+        0x11EA => 20,          // MLKEM512X25519
+        0x11E9 => 15,          // SecP256r1MLKEM512
+        0x0200 => 15,          // Pure ML-KEM-512
         _ => 0,
     }
 }
@@ -27,13 +30,6 @@ fn tls_version_points(version: &TlsVersion) -> u8 {
     match version {
         TlsVersion::Tls13 => 15,
         TlsVersion::Tls12 => 5,
-        _ => 0,
-    }
-}
-
-fn downgrade_points(downgrade: &DowngradeResult) -> u8 {
-    match downgrade {
-        DowngradeResult::Rejected => 5,
         _ => 0,
     }
 }
@@ -58,10 +54,19 @@ impl ScoringModel for Cnsa2StrictModel {
                 let ke = cnsa2_key_exchange_points(hs.negotiated_group.code_point);
                 let tls = tls_version_points(&hs.negotiated_version);
                 let cs = cnsa2_cipher_suite_points(hs.negotiated_suite.id);
-                let dg = downgrade_points(&probe.downgrade);
+                let dg = crate::audit::scoring::model::downgrade_points(
+                    &probe.downgrade,
+                    hs.classical_fallback,
+                    &hs.legacy_protocols,
+                );
                 (ke, tls, cs, dg)
             }
-            Err(_) => (0, 0, 0, downgrade_points(&probe.downgrade)),
+            Err(_) => (
+                0,
+                0,
+                0,
+                crate::audit::scoring::model::downgrade_points(&probe.downgrade, false, &[]),
+            ),
         };
         let (cert_points, cert_notes) = match cert_chain {
             Some(chain) => (cert_chain_points(chain), cert_chain_notes(chain)),
@@ -123,6 +128,9 @@ impl ScoringModel for Cnsa2StrictModel {
             FindingKind::UnparseableCertificate { .. } => Severity::Error,
             FindingKind::WeakCertificateSignature { .. } => Severity::Error,
             FindingKind::ExpiredCertificate { .. } => Severity::Error,
+            FindingKind::ClassicalFallbackAccepted => Severity::Error,
+            FindingKind::LegacyTlsProtocol { .. } => Severity::Error,
+            FindingKind::CertificateValidationFailed { .. } => Severity::Error,
         }
     }
 }
@@ -152,6 +160,9 @@ mod tests {
                 },
                 hrr_required: hrr,
                 cert_chain_der: vec![],
+                classical_fallback: false,
+                legacy_protocols: vec![],
+                certificate_validation_error: None,
             }),
             cipher_inventory: None,
             downgrade: DowngradeResult::Rejected,

@@ -34,6 +34,9 @@ pub struct Cli {
     pub sni: Option<String>,
     #[arg(long, default_value = "2030")]
     pub q_day: u32,
+    /// Skip certificate chain validation (the chain is still parsed and audited).
+    #[arg(long)]
+    pub insecure: bool,
 
     // Compliance
     #[arg(long, default_value = "nist")]

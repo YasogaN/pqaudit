@@ -1,5 +1,4 @@
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Result of parsing a server's TLS response.
 #[derive(Debug)]
@@ -120,112 +119,117 @@ fn parse_key_share_group(body: &[u8], extensions_offset: usize) -> Option<u16> {
     None
 }
 
-/// Build a minimal TLS 1.3 ClientHello.
-pub fn build_client_hello(
-    sni: &str,
-    cipher_suites: &[u16],
-    named_groups: &[u16],
-    max_version: u16,
-) -> Vec<u8> {
-    let mut extensions = Vec::new();
-
-    // SNI extension (0x0000)
-    if !sni.is_empty() {
-        let name_bytes = sni.as_bytes();
-        let name_len = name_bytes.len();
-        let list_len = name_len + 3; // type(1) + len(2)
-        let mut sni_ext = vec![
-            0x00, 0x00, // extension type: server_name
-        ];
-        let total_len = (list_len + 2) as u16;
-        sni_ext.extend_from_slice(&total_len.to_be_bytes());
-        sni_ext.extend_from_slice(&(list_len as u16).to_be_bytes()); // server_name_list length
-        sni_ext.push(0x00); // host_name type
-        sni_ext.extend_from_slice(&(name_len as u16).to_be_bytes());
-        sni_ext.extend_from_slice(name_bytes);
-        extensions.extend_from_slice(&sni_ext);
+fn push_sni_extension(extensions: &mut Vec<u8>, sni: &str) {
+    if sni.is_empty() {
+        return;
     }
+    let name_bytes = sni.as_bytes();
+    let name_len = name_bytes.len();
+    let list_len = name_len + 3; // type(1) + len(2)
+    let mut sni_ext = vec![0x00, 0x00]; // extension type: server_name
+    let total_len = (list_len + 2) as u16;
+    sni_ext.extend_from_slice(&total_len.to_be_bytes());
+    sni_ext.extend_from_slice(&(list_len as u16).to_be_bytes()); // server_name_list length
+    sni_ext.push(0x00); // host_name type
+    sni_ext.extend_from_slice(&(name_len as u16).to_be_bytes());
+    sni_ext.extend_from_slice(name_bytes);
+    extensions.extend_from_slice(&sni_ext);
+}
 
-    // Supported versions extension (0x002b)
-    {
-        let versions: &[u16] = if max_version >= 0x0304 {
-            &[0x0304, 0x0303] // TLS 1.3, TLS 1.2
-        } else {
-            &[0x0303] // TLS 1.2 only
-        };
-        let mut ext = vec![0x00, 0x2b]; // extension type
-        let versions_len = versions.len() * 2;
-        let ext_data_len = (versions_len + 1) as u16; // +1 for the length byte
-        ext.extend_from_slice(&ext_data_len.to_be_bytes());
-        ext.push(versions_len as u8);
-        for v in versions {
-            ext.extend_from_slice(&v.to_be_bytes());
-        }
-        extensions.extend_from_slice(&ext);
+fn push_supported_groups_extension(extensions: &mut Vec<u8>, named_groups: &[u16]) {
+    let groups_bytes: Vec<u8> = named_groups.iter().flat_map(|g| g.to_be_bytes()).collect();
+    let list_len = groups_bytes.len() as u16;
+    let ext_len = list_len + 2; // +2 for the list_len field
+    let mut ext = vec![0x00, 0x0a];
+    ext.extend_from_slice(&ext_len.to_be_bytes());
+    ext.extend_from_slice(&list_len.to_be_bytes());
+    ext.extend_from_slice(&groups_bytes);
+    extensions.extend_from_slice(&ext);
+}
+
+fn push_supported_versions_extension(extensions: &mut Vec<u8>, max_version: u16) {
+    let versions: &[u16] = if max_version >= 0x0304 {
+        &[0x0304, 0x0303] // TLS 1.3, TLS 1.2
+    } else {
+        &[0x0303] // TLS 1.2 only
+    };
+    let mut ext = vec![0x00, 0x2b]; // extension type
+    let versions_len = versions.len() * 2;
+    let ext_data_len = (versions_len + 1) as u16; // +1 for the length byte
+    ext.extend_from_slice(&ext_data_len.to_be_bytes());
+    ext.push(versions_len as u8);
+    for v in versions {
+        ext.extend_from_slice(&v.to_be_bytes());
     }
+    extensions.extend_from_slice(&ext);
+}
 
-    // Supported groups extension (0x000a)
-    {
-        let groups_bytes: Vec<u8> = named_groups.iter().flat_map(|g| g.to_be_bytes()).collect();
-        let list_len = groups_bytes.len() as u16;
-        let ext_len = list_len + 2; // +2 for the list_len field
-        let mut ext = vec![0x00, 0x0a];
-        ext.extend_from_slice(&ext_len.to_be_bytes());
-        ext.extend_from_slice(&list_len.to_be_bytes());
-        ext.extend_from_slice(&groups_bytes);
-        extensions.extend_from_slice(&ext);
-    }
+fn push_signature_algorithms_extension(extensions: &mut Vec<u8>) {
+    // Mandatory for TLS 1.3 per RFC 8446 §9.2.
+    const SIG_ALGS: &[u16] = &[
+        0x0403, // ecdsa_secp256r1_sha256
+        0x0503, // ecdsa_secp384r1_sha384
+        0x0603, // ecdsa_secp521r1_sha512
+        0x0804, // rsa_pss_rsae_sha256
+        0x0805, // rsa_pss_rsae_sha384
+        0x0806, // rsa_pss_rsae_sha512
+        0x0401, // rsa_pkcs1_sha256
+        0x0501, // rsa_pkcs1_sha384
+        0x0601, // rsa_pkcs1_sha512
+    ];
+    let alg_bytes: Vec<u8> = SIG_ALGS.iter().flat_map(|a| a.to_be_bytes()).collect();
+    let list_len = alg_bytes.len() as u16;
+    let ext_data_len = list_len + 2;
+    let mut ext = vec![0x00, 0x0d];
+    ext.extend_from_slice(&ext_data_len.to_be_bytes());
+    ext.extend_from_slice(&list_len.to_be_bytes());
+    ext.extend_from_slice(&alg_bytes);
+    extensions.extend_from_slice(&ext);
+}
 
-    // Signature algorithms extension (0x000d) — mandatory for TLS 1.3 per RFC 8446 §9.2
-    {
-        const SIG_ALGS: &[u16] = &[
-            0x0403, // ecdsa_secp256r1_sha256
-            0x0503, // ecdsa_secp384r1_sha384
-            0x0603, // ecdsa_secp521r1_sha512
-            0x0804, // rsa_pss_rsae_sha256
-            0x0805, // rsa_pss_rsae_sha384
-            0x0806, // rsa_pss_rsae_sha512
-            0x0401, // rsa_pkcs1_sha256
-            0x0501, // rsa_pkcs1_sha384
-            0x0601, // rsa_pkcs1_sha512
-        ];
-        let alg_bytes: Vec<u8> = SIG_ALGS.iter().flat_map(|a| a.to_be_bytes()).collect();
-        let list_len = alg_bytes.len() as u16;
-        let ext_data_len = list_len + 2;
-        let mut ext = vec![0x00, 0x0d];
-        ext.extend_from_slice(&ext_data_len.to_be_bytes());
-        ext.extend_from_slice(&list_len.to_be_bytes());
-        ext.extend_from_slice(&alg_bytes);
-        extensions.extend_from_slice(&ext);
-    }
-
-    // Key share extension (0x0033)
+fn push_key_share_extension(extensions: &mut Vec<u8>, named_groups: &[u16]) {
     // Always use X25519 (0x001D) with the base point when X25519 is in named_groups.
     // PQC hybrid groups need ~1184–1216 byte key shares that we don't generate;
     // advertising them in supported_groups is enough to trigger an HRR from PQC-capable
     // servers, which tells us the preferred group without needing a real PQC key share.
-    // If X25519 is not in the list (e.g. Kyber-draft-only probe), fall back to 32 zero bytes
-    // for the first group — callers accepting Option returns handle that gracefully.
-    {
-        let (ks_group, ks_key): (u16, Vec<u8>) = if named_groups.contains(&0x001D) {
-            let mut key = vec![0u8; 32];
-            key[0] = 9; // X25519 base point u-coordinate (little-endian)
-            (0x001D, key)
-        } else {
-            let group = named_groups.first().copied().unwrap_or(0x001D);
-            (group, vec![0u8; 32])
-        };
-        let key_len = ks_key.len() as u16;
-        let entry_len: u16 = 2 + 2 + key_len; // group(2) + key_len(2) + key
-        let list_len: u16 = entry_len;
-        let ext_data_len: u16 = list_len + 2;
-        let mut ext = vec![0x00, 0x33];
-        ext.extend_from_slice(&ext_data_len.to_be_bytes());
-        ext.extend_from_slice(&list_len.to_be_bytes());
-        ext.extend_from_slice(&ks_group.to_be_bytes());
-        ext.extend_from_slice(&key_len.to_be_bytes());
-        ext.extend_from_slice(&ks_key);
-        extensions.extend_from_slice(&ext);
+    let (ks_group, ks_key): (u16, Vec<u8>) = if named_groups.contains(&0x001D) {
+        let mut key = vec![0u8; 32];
+        key[0] = 9; // X25519 base point u-coordinate (little-endian)
+        (0x001D, key)
+    } else {
+        let group = named_groups.first().copied().unwrap_or(0x001D);
+        (group, vec![0u8; 32])
+    };
+    let key_len = ks_key.len() as u16;
+    let entry_len: u16 = 2 + 2 + key_len; // group(2) + key_len(2) + key
+    let list_len: u16 = entry_len;
+    let ext_data_len: u16 = list_len + 2;
+    let mut ext = vec![0x00, 0x33];
+    ext.extend_from_slice(&ext_data_len.to_be_bytes());
+    ext.extend_from_slice(&list_len.to_be_bytes());
+    ext.extend_from_slice(&ks_group.to_be_bytes());
+    ext.extend_from_slice(&key_len.to_be_bytes());
+    ext.extend_from_slice(&ks_key);
+    extensions.extend_from_slice(&ext);
+}
+
+fn build_hello(
+    sni: &str,
+    cipher_suites: &[u16],
+    named_groups: &[u16],
+    legacy_version: u16,
+    modern: bool,
+    max_version: u16,
+) -> Vec<u8> {
+    let mut extensions = Vec::new();
+    push_sni_extension(&mut extensions, sni);
+    if modern {
+        push_supported_versions_extension(&mut extensions, max_version);
+    }
+    push_supported_groups_extension(&mut extensions, named_groups);
+    if modern {
+        push_signature_algorithms_extension(&mut extensions);
+        push_key_share_extension(&mut extensions, named_groups);
     }
 
     // Build cipher suites
@@ -234,8 +238,7 @@ pub fn build_client_hello(
 
     // Build ClientHello body
     let mut hello_body = Vec::new();
-    // legacy_version: RFC 8446 §4.1.2 mandates 0x0303 for TLS 1.3; 0x0303 is also correct for TLS 1.2
-    hello_body.extend_from_slice(&0x0303u16.to_be_bytes()); // version (legacy)
+    hello_body.extend_from_slice(&legacy_version.to_be_bytes());
     hello_body.extend(std::iter::repeat_n(0u8, 32)); // random (32 zero bytes)
     hello_body.push(0x00); // session_id length = 0
     hello_body.extend_from_slice(&suites_len.to_be_bytes());
@@ -267,36 +270,367 @@ pub fn build_client_hello(
     record
 }
 
-/// Send ClientHello over an existing TcpStream, read response, classify it.
-/// Accumulates bytes until a complete TLS record is received (handles TCP fragmentation).
-pub async fn probe_once(stream: &mut TcpStream, hello: &[u8], timeout_ms: u64) -> ServerResponse {
+/// Build a minimal TLS 1.3 / 1.2 ClientHello.
+pub fn build_client_hello(
+    sni: &str,
+    cipher_suites: &[u16],
+    named_groups: &[u16],
+    max_version: u16,
+) -> Vec<u8> {
+    build_hello(sni, cipher_suites, named_groups, 0x0303, true, max_version)
+}
+
+/// Build a legacy TLS 1.0/1.1 ClientHello without TLS 1.3 extensions.
+pub fn build_client_hello_legacy(
+    sni: &str,
+    cipher_suites: &[u16],
+    named_groups: &[u16],
+    version: u16,
+) -> Vec<u8> {
+    build_hello(sni, cipher_suites, named_groups, version, false, version)
+}
+
+/// Read one complete TLS record from `stream`.
+///
+/// Returns `Err(Timeout)` or `Err(ConnectionClose)` if no complete record
+/// arrives before the deadline.
+pub async fn read_tls_record<S>(stream: &mut S, timeout_ms: u64) -> Result<Vec<u8>, ServerResponse>
+where
+    S: AsyncRead + Unpin,
+{
     use tokio::time::{Duration, Instant};
-    if stream.write_all(hello).await.is_err() {
-        return ServerResponse::ConnectionClose;
-    }
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     let mut buf = Vec::with_capacity(8192);
     loop {
-        // Determine how many bytes we need
         let need = if buf.len() >= 5 {
             5 + u16::from_be_bytes([buf[3], buf[4]]) as usize
         } else {
             5 // need at least the record header
         };
         if buf.len() >= need {
-            break;
+            return Ok(buf);
         }
         let remaining = match deadline.checked_duration_since(Instant::now()) {
             Some(d) => d,
-            None => return ServerResponse::Timeout,
+            None => return Err(ServerResponse::Timeout),
         };
         let mut chunk = [0u8; 4096];
         match tokio::time::timeout(remaining, stream.read(&mut chunk)).await {
-            Ok(Ok(0)) => return ServerResponse::ConnectionClose,
+            Ok(Ok(0)) => return Err(ServerResponse::ConnectionClose),
             Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
-            Ok(Err(_)) => return ServerResponse::ConnectionClose,
-            Err(_) => return ServerResponse::Timeout,
+            Ok(Err(_)) => return Err(ServerResponse::ConnectionClose),
+            Err(_) => return Err(ServerResponse::Timeout),
         }
     }
-    parse_server_response(&buf).unwrap_or(ServerResponse::ConnectionClose)
+}
+
+/// Send a ClientHello and classify the response.
+pub async fn send_and_receive<S>(stream: &mut S, hello: &[u8], timeout_ms: u64) -> ServerResponse
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    if stream.write_all(hello).await.is_err() {
+        return ServerResponse::ConnectionClose;
+    }
+    match read_tls_record(stream, timeout_ms).await {
+        Ok(buf) => parse_server_response(&buf).unwrap_or(ServerResponse::ConnectionClose),
+        Err(response) => response,
+    }
+}
+
+/// Send ClientHello over an existing TcpStream, read response, classify it.
+/// Accumulates bytes until a complete TLS record is received (handles TCP fragmentation).
+pub async fn probe_once<S>(stream: &mut S, hello: &[u8], timeout_ms: u64) -> ServerResponse
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    send_and_receive(stream, hello, timeout_ms).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    fn server_hello_bytes(selected_suite: u16, group: Option<u16>) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(&0x0303u16.to_be_bytes());
+        body.extend(std::iter::repeat_n(0u8, 32));
+        body.push(0); // session id
+        body.extend_from_slice(&selected_suite.to_be_bytes());
+        body.push(0); // compression
+        let mut exts = Vec::new();
+        if let Some(group) = group {
+            exts.extend_from_slice(&0x0033u16.to_be_bytes());
+            exts.extend_from_slice(&4u16.to_be_bytes());
+            exts.extend_from_slice(&group.to_be_bytes());
+            exts.extend_from_slice(&0u16.to_be_bytes());
+        }
+        body.extend_from_slice(&(exts.len() as u16).to_be_bytes());
+        body.extend_from_slice(&exts);
+
+        let mut hs = vec![
+            0x02,
+            ((body.len() >> 16) & 0xFF) as u8,
+            ((body.len() >> 8) & 0xFF) as u8,
+            (body.len() & 0xFF) as u8,
+        ];
+        hs.extend_from_slice(&body);
+        let mut rec = vec![
+            0x16,
+            0x03,
+            0x03,
+            ((hs.len() >> 8) & 0xFF) as u8,
+            (hs.len() & 0xFF) as u8,
+        ];
+        rec.extend_from_slice(&hs);
+        rec
+    }
+
+    #[test]
+    fn parses_handshake_failure_alert() {
+        let bytes = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28];
+        assert!(matches!(
+            parse_server_response(&bytes),
+            Ok(ServerResponse::HandshakeFailure)
+        ));
+    }
+
+    #[test]
+    fn parses_non_fatal_alert_as_connection_close() {
+        let bytes = [0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00];
+        assert!(matches!(
+            parse_server_response(&bytes),
+            Ok(ServerResponse::ConnectionClose)
+        ));
+    }
+
+    #[test]
+    fn short_alert_is_handshake_failure() {
+        let bytes = [0x15, 0x03, 0x03, 0x00, 0x01, 0x02];
+        assert!(matches!(
+            parse_server_response(&bytes),
+            Ok(ServerResponse::HandshakeFailure)
+        ));
+    }
+
+    #[test]
+    fn too_short_response_is_error() {
+        assert!(parse_server_response(&[0x16, 0x03]).is_err());
+    }
+
+    #[test]
+    fn unexpected_record_type_is_error() {
+        let bytes = [0x17, 0x03, 0x03, 0x00, 0x00];
+        assert!(parse_server_response(&bytes).is_err());
+    }
+
+    #[test]
+    fn parses_server_hello_with_key_share_group() {
+        let bytes = server_hello_bytes(0x1302, Some(0x11EC));
+        match parse_server_response(&bytes).unwrap() {
+            ServerResponse::ServerHello {
+                selected_suite,
+                selected_group,
+                tls_version,
+            } => {
+                assert_eq!(selected_suite, 0x1302);
+                assert_eq!(selected_group, Some(0x11EC));
+                assert_eq!(tls_version, 0x0303);
+            }
+            other => panic!("expected ServerHello, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_server_hello_without_extensions() {
+        let bytes = server_hello_bytes(0x1301, None);
+        match parse_server_response(&bytes).unwrap() {
+            ServerResponse::ServerHello {
+                selected_suite,
+                selected_group,
+                ..
+            } => {
+                assert_eq!(selected_suite, 0x1301);
+                assert_eq!(selected_group, None);
+            }
+            other => panic!("expected ServerHello, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn truncated_record_is_error() {
+        let mut bytes = server_hello_bytes(0x1302, None);
+        bytes.truncate(bytes.len() - 1);
+        assert!(parse_server_response(&bytes).is_err());
+    }
+
+    #[test]
+    fn short_handshake_is_error() {
+        let mut bytes = server_hello_bytes(0x1302, None);
+        bytes[4] = 2; // record length 2, so payload < 4
+        bytes.truncate(7);
+        assert!(parse_server_response(&bytes).is_err());
+    }
+
+    #[test]
+    fn wrong_handshake_type_is_error() {
+        let mut bytes = server_hello_bytes(0x1302, None);
+        bytes[5] = 0x01; // ClientHello
+        assert!(parse_server_response(&bytes).is_err());
+    }
+
+    #[test]
+    fn short_server_hello_body_is_error() {
+        let mut hs = vec![0x02, 0, 0, 2, 0x03, 0x03];
+        let mut rec = vec![0x16, 0x03, 0x03, 0, hs.len() as u8];
+        rec.append(&mut hs);
+        assert!(parse_server_response(&rec).is_err());
+    }
+
+    #[test]
+    fn truncated_session_id_is_error() {
+        let mut body = vec![0x03, 0x03];
+        body.extend(std::iter::repeat_n(0u8, 32));
+        body.push(32); // claims 32-byte session id but none follows
+        let mut hs = vec![0x02, 0, 0, body.len() as u8];
+        hs.extend_from_slice(&body);
+        let mut rec = vec![0x16, 0x03, 0x03, 0, hs.len() as u8];
+        rec.extend_from_slice(&hs);
+        assert!(parse_server_response(&rec).is_err());
+    }
+
+    #[test]
+    fn malformed_extension_length_is_ignored() {
+        let mut body = vec![0x03, 0x03];
+        body.extend(std::iter::repeat_n(0u8, 32));
+        body.push(0);
+        body.extend_from_slice(&0x1302u16.to_be_bytes());
+        body.push(0);
+        // Extensions length says 4, but the key_share extension claims more.
+        body.extend_from_slice(&4u16.to_be_bytes());
+        body.extend_from_slice(&0x0033u16.to_be_bytes());
+        body.extend_from_slice(&10u16.to_be_bytes());
+        let mut hs = vec![0x02, 0, 0, body.len() as u8];
+        hs.extend_from_slice(&body);
+        let mut rec = vec![0x16, 0x03, 0x03, 0, hs.len() as u8];
+        rec.extend_from_slice(&hs);
+        match parse_server_response(&rec).unwrap() {
+            ServerResponse::ServerHello { selected_group, .. } => assert_eq!(selected_group, None),
+            other => panic!("expected ServerHello, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn modern_client_hello_contains_tls13_extensions() {
+        let hello = build_client_hello("example.com", &[0x1301], &[0x11EC, 0x001D], 0x0304);
+        assert_eq!(hello[0], 0x16);
+        // supported_versions, signature_algorithms, key_share
+        let has = |ext: u16| hello.windows(2).any(|w| w == ext.to_be_bytes());
+        assert!(has(0x002b));
+        assert!(has(0x000d));
+        assert!(has(0x0033));
+        assert!(has(0x000a));
+        assert!(has(0x0000));
+    }
+
+    #[test]
+    fn legacy_client_hello_omits_tls13_extensions() {
+        let hello = build_client_hello_legacy("example.com", &[0x002F], &[0x001D], 0x0301);
+        let has = |ext: u16| hello.windows(2).any(|w| w == ext.to_be_bytes());
+        assert!(!has(0x002b));
+        assert!(!has(0x000d));
+        assert!(!has(0x0033));
+        assert!(has(0x000a));
+        assert_eq!(&hello[1..3], &[0x03, 0x01]);
+    }
+
+    #[test]
+    fn client_hello_with_empty_sni_omits_sni_extension() {
+        let without_sni = build_client_hello("", &[0x1301], &[0x001D], 0x0301);
+        let with_sni = build_client_hello("example.com", &[0x1301], &[0x001D], 0x0301);
+        assert!(with_sni.len() > without_sni.len());
+        assert!(!without_sni
+            .windows(b"example.com".len())
+            .any(|w| w == b"example.com"));
+    }
+
+    #[tokio::test]
+    async fn read_tls_record_handles_fragmentation() {
+        let (mut client, mut server) = tokio::io::duplex(4096);
+        let record = server_hello_bytes(0x1302, Some(0x11EC));
+        let (a, b) = record.split_at(3);
+        let a = a.to_vec();
+        let b = b.to_vec();
+        tokio::spawn(async move {
+            server.write_all(&a).await.unwrap();
+            server.write_all(&b).await.unwrap();
+        });
+        let buf = read_tls_record(&mut client, 1000).await.unwrap();
+        assert_eq!(buf, record);
+    }
+
+    #[tokio::test]
+    async fn read_tls_record_reports_timeout() {
+        let (mut client, _server) = tokio::io::duplex(64);
+        assert!(matches!(
+            read_tls_record(&mut client, 1).await,
+            Err(ServerResponse::Timeout)
+        ));
+    }
+
+    #[tokio::test]
+    async fn read_tls_record_reports_connection_close() {
+        let (mut client, server) = tokio::io::duplex(64);
+        drop(server);
+        assert!(matches!(
+            read_tls_record(&mut client, 1000).await,
+            Err(ServerResponse::ConnectionClose)
+        ));
+    }
+
+    #[tokio::test]
+    async fn send_and_receive_parses_server_hello() {
+        let (mut client, mut server) = tokio::io::duplex(4096);
+        let record = server_hello_bytes(0x1302, Some(0x11EC));
+        tokio::spawn(async move {
+            let mut buf = [0u8; 256];
+            let _ = server.read(&mut buf).await;
+            server.write_all(&record).await.unwrap();
+        });
+        let response = send_and_receive(&mut client, b"hello", 1000).await;
+        assert!(matches!(
+            response,
+            ServerResponse::ServerHello {
+                selected_group: Some(0x11EC),
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn send_and_receive_reports_write_failure() {
+        let (client, server) = tokio::io::duplex(64);
+        drop(server);
+        let mut client = client;
+        assert!(matches!(
+            send_and_receive(&mut client, b"hello", 100).await,
+            ServerResponse::ConnectionClose
+        ));
+    }
+
+    #[tokio::test]
+    async fn probe_once_delegates_to_send_and_receive() {
+        let (mut client, mut server) = tokio::io::duplex(4096);
+        let record = server_hello_bytes(0x1301, None);
+        tokio::spawn(async move {
+            let mut buf = [0u8; 256];
+            let _ = server.read(&mut buf).await;
+            server.write_all(&record).await.unwrap();
+        });
+        assert!(matches!(
+            probe_once(&mut client, b"hello", 1000).await,
+            ServerResponse::ServerHello { .. }
+        ));
+    }
 }

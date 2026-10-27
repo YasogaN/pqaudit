@@ -123,6 +123,37 @@ pub fn remediation_for(kind: &FindingKind) -> Remediation {
             ),
             config_snippets: vec![],
         },
+
+        FindingKind::ClassicalFallbackAccepted => Remediation {
+            text: "The server still accepts a classical-only TLS 1.3 key exchange, so clients \
+                   that do not offer ML-KEM can connect without PQC. Restrict the server to \
+                   hybrid/PQC groups once client compatibility allows."
+                .into(),
+            config_snippets: vec![
+                ("nginx", "ssl_ecdh_curve X25519MLKEM768;".into()),
+                ("caddy", "curves x25519mlkem768".into()),
+            ],
+        },
+
+        FindingKind::LegacyTlsProtocol { version } => Remediation {
+            text: format!(
+                "The server accepts {version}. Disable TLS 1.0 and TLS 1.1 and require TLS 1.3 \
+                 (or at minimum TLS 1.2)."
+            ),
+            config_snippets: vec![
+                ("nginx", "ssl_protocols TLSv1.3;".into()),
+                ("openssl", "openssl.conf: MinProtocol = TLSv1.3".into()),
+            ],
+        },
+
+        FindingKind::CertificateValidationFailed { reason } => Remediation {
+            text: format!(
+                "The certificate chain could not be validated: {reason}. Replace the chain with \
+                 one that chains to a publicly trusted CA, or use a custom trust store if this \
+                 is a private endpoint."
+            ),
+            config_snippets: vec![],
+        },
     }
 }
 
@@ -196,6 +227,13 @@ mod tests {
             FindingKind::ExpiredCertificate {
                 position: ChainPosition::Leaf,
                 expiry: NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+            },
+            FindingKind::ClassicalFallbackAccepted,
+            FindingKind::LegacyTlsProtocol {
+                version: TlsVersion::Tls10,
+            },
+            FindingKind::CertificateValidationFailed {
+                reason: "untrusted issuer".into(),
             },
         ];
         for kind in &kinds {
