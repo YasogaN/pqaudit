@@ -137,4 +137,43 @@ mod tests {
     fn tls13_suite_list_has_five_entries() {
         assert_eq!(tls13_suites().count(), 5);
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enumerate_ciphers_discovers_tls13_and_tls12_suites() {
+        use crate::test_support::suite_selecting_server;
+
+        let server =
+            suite_selecting_server(vec![0x1302, 0x1303, 0xC02C, 0xC030, 0x000A], Some(0x11EC))
+                .await;
+        let inv = enumerate_ciphers("127.0.0.1", server.port(), "", 2000).await;
+        assert_eq!(inv.tls13_suites.len(), 2);
+        assert_eq!(inv.tls12_suites.len(), 3);
+        assert!(inv.tls13_suites.iter().any(|s| s.id == 0x1302));
+        assert!(inv.tls13_suites.iter().any(|s| s.id == 0x1303));
+        assert!(inv.tls12_suites.iter().any(|s| s.id == 0xC02C));
+        assert!(inv.tls12_suites.iter().any(|s| s.id == 0xC030));
+        assert!(inv.tls12_suites.iter().any(|s| s.id == 0x000A));
+        assert!(!inv.kyber_draft_accepted);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn kyber_draft_probe_detects_hrr_selection() {
+        use crate::test_support::{fixed_response_server, server_hello, HRR_RANDOM};
+
+        let server =
+            fixed_response_server(server_hello(0x1302, Some(0x6399), 0x0303, Some(HRR_RANDOM)))
+                .await;
+        assert!(probe_kyber_draft("127.0.0.1", server.port(), "", 2000).await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enumerate_ciphers_handles_unreachable_endpoint() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let inv = enumerate_ciphers("127.0.0.1", port, "", 50).await;
+        assert!(inv.tls13_suites.is_empty());
+        assert!(inv.tls12_suites.is_empty());
+        assert!(!inv.kyber_draft_accepted);
+    }
 }

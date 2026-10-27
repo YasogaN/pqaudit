@@ -88,12 +88,12 @@ mod tests {
             selected_group: None,
             tls_version: 0x0303,
         };
-        match classify_downgrade(&r) {
-            DowngradeResult::Accepted { negotiated_version } => {
-                assert_eq!(negotiated_version, TlsVersion::Tls12);
+        assert!(matches!(
+            classify_downgrade(&r),
+            DowngradeResult::Accepted {
+                negotiated_version: TlsVersion::Tls12
             }
-            other => panic!("expected Accepted, got {:?}", other),
-        }
+        ));
     }
 
     #[test]
@@ -109,5 +109,65 @@ mod tests {
                 negotiated_version: TlsVersion::Tls11
             }
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn probe_downgrade_accepts_tls12_server_hello() {
+        use crate::test_support::{fixed_response_server, server_hello};
+
+        let server = fixed_response_server(server_hello(0xC02F, None, 0x0303, None)).await;
+        assert_eq!(
+            probe_downgrade("127.0.0.1", server.port(), "", 2000).await,
+            DowngradeResult::Accepted {
+                negotiated_version: TlsVersion::Tls12
+            }
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn probe_downgrade_rejects_handshake_failure() {
+        use crate::test_support::fixed_response_server;
+
+        let server = fixed_response_server(vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]).await;
+        assert_eq!(
+            probe_downgrade("127.0.0.1", server.port(), "", 2000).await,
+            DowngradeResult::Rejected
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn probe_downgrade_times_out_and_rejects_connection_errors() {
+        use crate::test_support::silent_server;
+
+        let silent = silent_server().await;
+        assert_eq!(
+            probe_downgrade("127.0.0.1", silent.port(), "", 50).await,
+            DowngradeResult::Timeout
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        assert_eq!(
+            probe_downgrade("127.0.0.1", port, "", 50).await,
+            DowngradeResult::Rejected
+        );
+
+        // RFC 5737 TEST-NET-1: connection cannot complete, so this maps to
+        // Timeout on Linux and to Rejected on platforms that fail fast.
+        assert!(matches!(
+            probe_downgrade("192.0.2.1", 443, "", 10).await,
+            DowngradeResult::Timeout | DowngradeResult::Rejected
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn probe_downgrade_performs_starttls() {
+        use crate::test_support::smtp_starttls_server;
+        use rustls::crypto::aws_lc_rs;
+
+        let server = smtp_starttls_server(aws_lc_rs::default_provider()).await;
+        let result = probe_downgrade("127.0.0.1", server.port(), "smtp", 2000).await;
+        assert!(matches!(result, DowngradeResult::Accepted { .. }));
     }
 }
