@@ -33,6 +33,11 @@ impl DeadlineTable for Cnsa2Table {
                 disallowed_year: 2000,
                 note: "RSA below 2048 bits is already disallowed",
             },
+            AlgorithmId::Dh { min_bits } if *min_bits < 2048 => DeadlineInfo {
+                deprecated_year: 2000,
+                disallowed_year: 2000,
+                note: "Finite-field DH below 2048 bits is already disallowed",
+            },
             AlgorithmId::Dsa { .. } => DeadlineInfo {
                 deprecated_year: 2000,
                 disallowed_year: 2000,

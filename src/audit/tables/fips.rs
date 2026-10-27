@@ -21,6 +21,11 @@ impl DeadlineTable for FipsTable {
                 disallowed_year: 2000,
                 note: "RSA below 2048 bits is not FIPS-approved",
             },
+            AlgorithmId::Dh { min_bits } if *min_bits < 2048 => DeadlineInfo {
+                deprecated_year: 2000,
+                disallowed_year: 2000,
+                note: "Finite-field DH below 2048 bits is not FIPS-approved",
+            },
             AlgorithmId::Dsa { .. } => DeadlineInfo {
                 deprecated_year: 2000,
                 disallowed_year: 2000,
@@ -89,6 +94,7 @@ mod tests {
         let table = FipsTable;
         for alg in [
             AlgorithmId::Rsa { min_bits: 1024 },
+            AlgorithmId::Dh { min_bits: 1024 },
             AlgorithmId::Dsa { min_bits: 2048 },
             AlgorithmId::X25519,
             AlgorithmId::X448,
