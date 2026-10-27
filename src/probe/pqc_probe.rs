@@ -129,6 +129,14 @@ impl ServerCertVerifier for NoCertificateVerification {
     }
 }
 
+/// Provider used for the main handshake: all supported PQC groups, including
+/// pure ML-KEM, with the provider's default preference order preserved first.
+fn full_provider() -> CryptoProvider {
+    let mut provider = aws_lc_rs::default_provider();
+    provider.kx_groups = aws_lc_rs::ALL_KX_GROUPS.to_vec();
+    provider
+}
+
 fn client_config(
     provider: CryptoProvider,
     insecure: bool,
@@ -296,43 +304,16 @@ async fn handshake_with_fallback(
         &[&rustls::version::TLS13, &rustls::version::TLS12];
 
     if config.insecure {
-        let stream = connect_tls(
-            host,
-            port,
-            sni,
-            config,
-            aws_lc_rs::default_provider(),
-            versions,
-            true,
-        )
-        .await?;
+        let stream = connect_tls(host, port, sni, config, full_provider(), versions, true).await?;
         return extract_handshake(stream, None);
     }
 
-    match connect_tls(
-        host,
-        port,
-        sni,
-        config,
-        aws_lc_rs::default_provider(),
-        versions,
-        false,
-    )
-    .await
-    {
+    match connect_tls(host, port, sni, config, full_provider(), versions, false).await {
         Ok(stream) => extract_handshake(stream, None),
         Err(e @ ProbeError::TlsHandshakeFailed { .. }) => {
             let reason = e.to_string();
-            let stream = connect_tls(
-                host,
-                port,
-                sni,
-                config,
-                aws_lc_rs::default_provider(),
-                versions,
-                true,
-            )
-            .await?;
+            let stream =
+                connect_tls(host, port, sni, config, full_provider(), versions, true).await?;
             extract_handshake(stream, Some(reason))
         }
         Err(e) => Err(e),
@@ -887,6 +868,18 @@ mod tests {
 
         apply_raw_probe(&mut result, None);
         assert_eq!(result.negotiated_group.code_point, 0x11EC);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn full_provider_can_negotiate_pure_mlkem1024() {
+        let provider =
+            crate::test_support::provider_with_groups(vec![aws_lc_rs::kx_group::MLKEM1024]);
+        let server = crate::test_support::tls_server(provider, &[&rustls::version::TLS13]).await;
+        let result = pqc_probe("127.0.0.1", server.port(), Some("localhost"), &config(true))
+            .await
+            .unwrap();
+        assert_eq!(result.negotiated_group.code_point, 0x0202);
+        assert!(result.negotiated_group.is_pqc);
     }
 
     #[tokio::test]
