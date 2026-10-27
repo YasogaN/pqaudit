@@ -5,7 +5,7 @@ use crate::output::{
 };
 use crate::scanner::{scan, ScanConfig};
 use crate::ScanReport;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 
 /// Run the CLI workflow and return the process exit code.
 ///
@@ -97,6 +97,9 @@ pub async fn run(cli: Cli) -> i32 {
         }
     } else {
         print!("{}", output_str);
+        // `main` exits with process::exit, which skips destructors; flush
+        // explicitly so piped output is never truncated.
+        let _ = std::io::stdout().flush();
     }
 
     determine_exit_code(&report, &cli)
