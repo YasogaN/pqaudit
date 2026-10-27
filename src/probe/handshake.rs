@@ -237,7 +237,11 @@ fn build_hello(
     // Build ClientHello body
     let mut hello_body = Vec::new();
     hello_body.extend_from_slice(&legacy_version.to_be_bytes());
-    hello_body.extend(std::iter::repeat_n(0u8, 32)); // random (32 zero bytes)
+    let mut random = [0u8; 32];
+    // ClientHello.random must not be predictable. If the RNG fails, the
+    // zero-filled buffer is still structurally valid for a probe.
+    let _ = aws_lc_rs::rand::fill(&mut random);
+    hello_body.extend_from_slice(&random);
     hello_body.push(0x00); // session_id length = 0
     hello_body.extend_from_slice(&suites_len.to_be_bytes());
     hello_body.extend_from_slice(&suites_bytes);
@@ -530,6 +534,15 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn client_hello_random_bytes_are_not_repeated() {
+        let a = build_client_hello("example.com", &[0x1301], &[0x001D], 0x0304);
+        let b = build_client_hello("example.com", &[0x1301], &[0x001D], 0x0304);
+        // random follows the 5-byte record header, 4-byte handshake header,
+        // and 2-byte legacy version.
+        assert_ne!(a[11..43], b[11..43]);
     }
 
     #[test]
