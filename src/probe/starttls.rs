@@ -61,11 +61,20 @@ fn split_host_port(s: &str, default_port: u16) -> (&str, u16) {
             }
             return (host, default_port);
         }
+        // Unterminated IPv6 literal: do not treat the trailing digits as a port.
+        return (s, default_port);
     }
     if let Some(colon) = s.rfind(':') {
         if let Ok(port) = s[colon + 1..].parse::<u16>() {
             return (&s[..colon], port);
         }
+        // A colon with a non-numeric suffix is an invalid port; keep the host
+        // and fall back to the scheme's default port. Unbracketed IPv6 literals
+        // are not supported; leave them untouched.
+        if s[..colon].contains(':') {
+            return (s, default_port);
+        }
+        return (&s[..colon], default_port);
     }
     (s, default_port)
 }
@@ -530,5 +539,213 @@ mod tests {
             ),
             "POP3 -ERR response should propagate as StarttlsUpgradeFailed"
         );
+    }
+
+    #[test]
+    fn parse_scheme_ipv6_literals_strip_brackets() {
+        let t = parse_scheme("[::1]:443");
+        assert_eq!(t.host, "::1");
+        assert_eq!(t.port, 443);
+
+        let t = parse_scheme("[2001:db8::1]");
+        assert_eq!(t.host, "2001:db8::1");
+        assert_eq!(t.port, 443);
+
+        let t = parse_scheme("smtp://[::1]:25");
+        assert_eq!(t.scheme, "smtp");
+        assert_eq!(t.host, "::1");
+        assert_eq!(t.port, 25);
+    }
+
+    #[test]
+    fn parse_scheme_invalid_port_falls_back_to_default() {
+        let t = parse_scheme("example.com:notaport");
+        assert_eq!(t.host, "example.com");
+        assert_eq!(t.port, 443);
+    }
+
+    #[test]
+    fn parse_scheme_handles_unterminated_ipv6_bracket() {
+        let t = parse_scheme("[::1");
+        assert_eq!(t.host, "[::1");
+        assert_eq!(t.port, 443);
+
+        let t = parse_scheme("a:b:c");
+        assert_eq!(t.host, "a:b:c");
+        assert_eq!(t.port, 443);
+    }
+
+    #[tokio::test]
+    async fn http_scheme_passes_through() {
+        let (client, _server) = tokio::io::duplex(64);
+        assert!(upgrade_to_tls("http", client, 80).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn smtp_rejects_unexpected_greeting() {
+        let (client, mut server) = tokio::io::duplex(4096);
+        server.write_all(b"554 no service\r\n").await.unwrap();
+        let result = smtp_upgrade(client).await;
+        drop(server);
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Smtp,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn smtp_rejects_unexpected_ehlo_response() {
+        let (client, mut server) = tokio::io::duplex(4096);
+        server
+            .write_all(b"220 hi\r\n500 no ehlo\r\n")
+            .await
+            .unwrap();
+        let result = smtp_upgrade(client).await;
+        drop(server);
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Smtp,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn smtp_rejects_starttls_command() {
+        let (client, mut server) = tokio::io::duplex(4096);
+        server
+            .write_all(b"220 hi\r\n250 STARTTLS\r\n454 not today\r\n")
+            .await
+            .unwrap();
+        let result = smtp_upgrade(client).await;
+        drop(server);
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Smtp,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn smtp_reports_read_eof() {
+        let (client, server) = tokio::io::duplex(4096);
+        drop(server);
+        let result = smtp_upgrade(client).await;
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Smtp,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn smtp_reports_write_error_after_greeting() {
+        let (client, mut server) = tokio::io::duplex(4096);
+        server.write_all(b"220 hi\r\n").await.unwrap();
+        drop(server);
+        let result = smtp_upgrade(client).await;
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Smtp,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn imap_rejects_unexpected_greeting() {
+        let (client, mut server) = tokio::io::duplex(4096);
+        server.write_all(b"* BYE no\r\n").await.unwrap();
+        let result = imap_upgrade(client).await;
+        drop(server);
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Imap,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn imap_reports_read_eof() {
+        let (client, server) = tokio::io::duplex(4096);
+        drop(server);
+        let result = imap_upgrade(client).await;
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Imap,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn imap_reports_write_error_after_greeting() {
+        let (client, mut server) = tokio::io::duplex(4096);
+        server.write_all(b"* OK hi\r\n").await.unwrap();
+        drop(server);
+        let result = imap_upgrade(client).await;
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Imap,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn pop3_rejects_unexpected_greeting() {
+        let (client, mut server) = tokio::io::duplex(4096);
+        server.write_all(b"-ERR nope\r\n").await.unwrap();
+        let result = pop3_upgrade(client).await;
+        drop(server);
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Pop3,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn pop3_reports_read_eof() {
+        let (client, server) = tokio::io::duplex(4096);
+        drop(server);
+        let result = pop3_upgrade(client).await;
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Pop3,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn pop3_reports_write_error_after_greeting() {
+        let (client, mut server) = tokio::io::duplex(4096);
+        server.write_all(b"+OK hi\r\n").await.unwrap();
+        drop(server);
+        let result = pop3_upgrade(client).await;
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Pop3,
+                ..
+            })
+        ));
     }
 }
