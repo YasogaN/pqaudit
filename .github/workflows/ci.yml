@@ -35,6 +35,28 @@ jobs:
       - run: cargo test --no-default-features
       - run: cargo test --features mcp
 
+  coverage:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Enforce line coverage
+        run: >-
+          cargo llvm-cov
+          --no-default-features --features mcp
+          --workspace --all-targets
+          --fail-under-lines 60
+          --lcov --output-path lcov.info
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: lcov.info
+
   lint:
     needs: changes
     if: needs.changes.outputs.code == 'true'
