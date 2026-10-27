@@ -18,12 +18,9 @@ struct CryptoAsset {
 pub fn render_cbom(report: &ScanReport) -> String {
     let components = build_components(&report.targets);
 
-    let serial = format!("urn:pqaudit:{}", report.scanned_at.replace([':', '.'], "-"));
-
     let cbom = json!({
         "bomFormat": CBOM_FORMAT,
         "specVersion": CBOM_SPEC_VERSION,
-        "serialNumber": serial,
         "version": 1,
         "metadata": {
             "timestamp": report.scanned_at,
@@ -102,8 +99,13 @@ fn build_components(targets: &[TargetReport]) -> Vec<Value> {
         }
     }
 
+    // HashMap iteration order is deliberately randomized; sort for stable
+    // CBOM diffs across runs.
+    let mut assets: Vec<CryptoAsset> = assets.into_values().collect();
+    assets.sort_by(|a, b| a.algorithm.cmp(&b.algorithm));
+
     assets
-        .into_values()
+        .into_iter()
         .map(|asset| {
             json!({
                 "type": "cryptographic-asset",
@@ -356,6 +358,21 @@ mod tests {
         report.targets[0].negotiated_suite = None;
         let cbom: serde_json::Value = serde_json::from_str(&render_cbom(&report)).unwrap();
         assert!(cbom["components"].is_array());
+    }
+
+    #[test]
+    fn cbom_components_are_sorted_for_stable_diffs() {
+        let report = stub_scan_report();
+        let cbom: serde_json::Value = serde_json::from_str(&render_cbom(&report)).unwrap();
+        let names: Vec<&str> = cbom["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "CBOM component order must be stable");
     }
 
     #[test]
