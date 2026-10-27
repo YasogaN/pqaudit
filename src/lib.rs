@@ -7,6 +7,9 @@ pub mod output;
 pub mod probe;
 pub mod scanner;
 
+#[cfg(test)]
+pub mod test_support;
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
