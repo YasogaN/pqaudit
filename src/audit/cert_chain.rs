@@ -151,7 +151,10 @@ pub fn signature_algorithm_name(oid: &str) -> String {
         "1.2.840.10045.4.3.3" => "ecdsa-with-SHA384".into(),
         "1.2.840.10045.4.3.4" => "ecdsa-with-SHA512".into(),
         "1.2.840.10040.4.3" => "dsa-with-SHA1".into(),
-        "2.16.840.1.101.3.4.3.1" => "dsa-with-SHA256".into(),
+        "2.16.840.1.101.3.4.3.1" => "dsa-with-SHA224".into(),
+        "2.16.840.1.101.3.4.3.2" => "dsa-with-SHA256".into(),
+        "2.16.840.1.101.3.4.3.3" => "dsa-with-SHA384".into(),
+        "2.16.840.1.101.3.4.3.4" => "dsa-with-SHA512".into(),
         OID_ED25519 => "Ed25519".into(),
         OID_ED448 => "Ed448".into(),
         OID_ML_DSA_44 => "ML-DSA-44".into(),
@@ -354,9 +357,6 @@ mod tests {
         let mut out = Vec::new();
         while let Ok((rest, block)) = parse_x509_pem(remaining) {
             out.push(block.contents);
-            if rest.len() == remaining.len() {
-                break;
-            }
             remaining = rest;
         }
         out
@@ -622,5 +622,106 @@ mod tests {
         assert_eq!(curve_name("1.3.132.0.10"), Some("secp256k1"));
         assert_eq!(curve_name("1.3.132.0.33"), Some("P-224"));
         assert_eq!(curve_name("1.2.3.4"), None);
+    }
+
+    #[test]
+    fn p521_and_unknown_curve_are_parsed() {
+        let report = audit(include_bytes!("../../tests/fixtures/certs/ec-p521.pem"));
+        assert_eq!(
+            report.entries[0].key,
+            KeyInfo::Ec {
+                curve: "P-521".into()
+            }
+        );
+        assert_eq!(report.entries[0].algorithm, AlgorithmId::EcP521);
+
+        let report = audit(include_bytes!(
+            "../../tests/fixtures/certs/ec-secp256k1.pem"
+        ));
+        assert_eq!(
+            report.entries[0].key,
+            KeyInfo::Ec {
+                curve: "secp256k1".into()
+            }
+        );
+        assert_eq!(report.entries[0].algorithm, AlgorithmId::Unknown);
+    }
+
+    #[test]
+    fn dsa_certificate_is_parsed() {
+        let report = audit(include_bytes!("../../tests/fixtures/certs/dsa2048.pem"));
+        let entry = &report.entries[0];
+        assert!(matches!(entry.key, KeyInfo::Dsa { .. }));
+        assert!(matches!(entry.algorithm, AlgorithmId::Dsa { .. }));
+        assert_eq!(entry.signature_algorithm, "dsa-with-SHA256");
+    }
+
+    #[test]
+    fn unknown_spki_oid_is_parsed_as_unknown() {
+        let mut der =
+            pem_certs(include_bytes!("../../tests/fixtures/certs/rsa2048.pem"))[0].clone();
+        // rsaEncryption OID …1.1.1 → md2WithRSAEncryption …1.1.2 (unknown as an SPKI algorithm).
+        let rsa_oid = [
+            0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01,
+        ];
+        let unknown_oid = [
+            0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x02,
+        ];
+        let pos = der
+            .windows(rsa_oid.len())
+            .position(|w| w == rsa_oid)
+            .expect("rsa OID present");
+        der[pos..pos + unknown_oid.len()].copy_from_slice(&unknown_oid);
+        let report = audit_chain(&[der], &NistIr8547Table, 2026);
+        assert_eq!(report.entries[0].key, KeyInfo::Unknown);
+        assert_eq!(report.entries[0].algorithm, AlgorithmId::Unknown);
+    }
+
+    #[test]
+    fn fips_approved_classical_cert_has_no_classical_finding() {
+        use crate::audit::tables::fips::FipsTable;
+        let report = audit_chain(
+            &pem_certs(include_bytes!("../../tests/fixtures/certs/rsa2048.pem")),
+            &FipsTable,
+            2026,
+        );
+        assert!(!report
+            .findings
+            .iter()
+            .any(|f| matches!(f.kind, FindingKind::ClassicalCertificate { .. })));
+    }
+
+    #[test]
+    fn chain_with_pqc_ca_but_classical_leaf_scores_five() {
+        let report = CertChainReport {
+            entries: vec![
+                CertEntry {
+                    position: ChainPosition::Leaf,
+                    key: KeyInfo::Ec {
+                        curve: "P-256".into(),
+                    },
+                    expiry_year: 2030,
+                    not_after: chrono::NaiveDate::from_ymd_opt(2030, 1, 1).unwrap(),
+                    subject: "leaf".into(),
+                    algorithm: AlgorithmId::EcP256,
+                    signature_algorithm: "ecdsa-with-SHA256".into(),
+                    self_signed: false,
+                    expired: false,
+                },
+                CertEntry {
+                    position: ChainPosition::Root,
+                    key: KeyInfo::MlDsa { level: 65 },
+                    expiry_year: 2040,
+                    not_after: chrono::NaiveDate::from_ymd_opt(2040, 1, 1).unwrap(),
+                    subject: "root".into(),
+                    algorithm: AlgorithmId::MlDsa65,
+                    signature_algorithm: "ML-DSA-65".into(),
+                    self_signed: true,
+                    expired: false,
+                },
+            ],
+            findings: vec![],
+        };
+        assert_eq!(cert_chain_points(&report), 5);
     }
 }
