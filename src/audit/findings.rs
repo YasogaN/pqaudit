@@ -39,6 +39,17 @@ pub enum FindingKind {
         deadline: u32,
         algorithm: AlgorithmId,
     },
+    UnparseableCertificate {
+        depth: usize,
+    },
+    WeakCertificateSignature {
+        position: ChainPosition,
+        algorithm: String,
+    },
+    ExpiredCertificate {
+        position: ChainPosition,
+        expiry: NaiveDate,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +99,20 @@ impl fmt::Display for FindingKind {
                 "Certificate expires {} after {:?} deadline {}",
                 expiry, algorithm, deadline
             ),
+            Self::UnparseableCertificate { depth } => {
+                write!(f, "Could not parse certificate at chain depth {depth}")
+            }
+            Self::WeakCertificateSignature {
+                position,
+                algorithm,
+            } => write!(
+                f,
+                "Certificate ({:?}) uses deprecated signature algorithm {}",
+                position, algorithm
+            ),
+            Self::ExpiredCertificate { position, expiry } => {
+                write!(f, "Certificate ({:?}) expired on {}", position, expiry)
+            }
         }
     }
 }
@@ -109,6 +134,9 @@ impl Finding {
             FindingKind::DowngradeAccepted => "PQA007",
             FindingKind::TlsVersionInsufficient { .. } => "PQA008",
             FindingKind::CertExpiresAfterDeadline { .. } => "PQA009",
+            FindingKind::UnparseableCertificate { .. } => "PQA010",
+            FindingKind::WeakCertificateSignature { .. } => "PQA011",
+            FindingKind::ExpiredCertificate { .. } => "PQA012",
         }
     }
 }

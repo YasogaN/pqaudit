@@ -112,7 +112,7 @@ async fn scan_single(target: String, config: &ScanConfig) -> TargetReport {
                 cipher_inventory: cipher_inventory.clone(),
                 downgrade: downgrade.clone(),
             };
-            let score = model.score(&empty_probe, table.as_ref());
+            let score = model.score(&empty_probe, None, table.as_ref());
             let hndl = DefaultHndlModel.assess(
                 &empty_probe,
                 &HndlConfig {
@@ -136,8 +136,11 @@ async fn scan_single(target: String, config: &ScanConfig) -> TargetReport {
             }
         }
         Ok(pqc) => {
-            // Audit the certificate chain.
-            let cert_chain = audit_chain(&pqc.cert_chain_der);
+            let (table, model) = compliance_pair(config.compliance.clone());
+            let current_year = Utc::now().year_unsigned();
+
+            // Audit the certificate chain against the active compliance table.
+            let cert_chain = audit_chain(&pqc.cert_chain_der, table.as_ref(), current_year);
             let cert_expiry_year = cert_chain.entries.first().map(|e| e.expiry_year);
 
             // Assemble ProbeResults for scoring and HNDL.
@@ -149,8 +152,7 @@ async fn scan_single(target: String, config: &ScanConfig) -> TargetReport {
                 downgrade: downgrade.clone(),
             };
 
-            let (table, model) = compliance_pair(config.compliance.clone());
-            let score = model.score(&probe_results, table.as_ref());
+            let score = model.score(&probe_results, Some(&cert_chain), table.as_ref());
 
             let hndl = DefaultHndlModel.assess(
                 &probe_results,

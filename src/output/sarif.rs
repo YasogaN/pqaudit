@@ -61,6 +61,24 @@ fn rule_definitions() -> Value {
             "name": "CertExpiresAfterDeadline",
             "shortDescription": { "text": "Certificate expiry date extends past the algorithm disallowance deadline." },
             "helpUri": "https://csrc.nist.gov/pubs/ir/8547/ipd"
+        },
+        {
+            "id": "PQA010",
+            "name": "UnparseableCertificate",
+            "shortDescription": { "text": "A certificate in the server chain could not be parsed." },
+            "helpUri": "https://www.rfc-editor.org/rfc/rfc5280"
+        },
+        {
+            "id": "PQA011",
+            "name": "WeakCertificateSignature",
+            "shortDescription": { "text": "Certificate uses a deprecated MD5 or SHA-1 signature algorithm." },
+            "helpUri": "https://www.rfc-editor.org/rfc/rfc9155"
+        },
+        {
+            "id": "PQA012",
+            "name": "ExpiredCertificate",
+            "shortDescription": { "text": "A certificate in the server chain has expired." },
+            "helpUri": "https://www.rfc-editor.org/rfc/rfc5280"
         }
     ])
 }
@@ -165,7 +183,7 @@ mod tests {
             .collect();
         assert!(rules.contains(&"PQA001"), "PQA001 missing from rules");
         assert!(rules.contains(&"PQA007"), "PQA007 missing from rules");
-        assert_eq!(rules.len(), 9, "expected all 9 PQA rules");
+        assert_eq!(rules.len(), 12, "expected all 12 PQA rules");
     }
 
     #[test]

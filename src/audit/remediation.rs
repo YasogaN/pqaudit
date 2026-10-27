@@ -93,6 +93,36 @@ pub fn remediation_for(kind: &FindingKind) -> Remediation {
             ),
             config_snippets: vec![],
         },
+
+        FindingKind::UnparseableCertificate { depth } => Remediation {
+            text: format!(
+                "The certificate at chain depth {depth} could not be parsed. Check that the \
+                 server sends a valid DER-encoded X.509 chain."
+            ),
+            config_snippets: vec![],
+        },
+
+        FindingKind::WeakCertificateSignature {
+            position,
+            algorithm,
+        } => Remediation {
+            text: format!(
+                "The {:?} certificate uses the deprecated signature algorithm '{}'. \
+                 Re-issue the certificate with SHA-256 or stronger (or a PQC signature \
+                 algorithm such as ML-DSA).",
+                position, algorithm
+            ),
+            config_snippets: vec![],
+        },
+
+        FindingKind::ExpiredCertificate { position, expiry } => Remediation {
+            text: format!(
+                "The {:?} certificate expired on {}. Renew it and automate certificate \
+                 rotation.",
+                position, expiry
+            ),
+            config_snippets: vec![],
+        },
     }
 }
 
@@ -157,6 +187,15 @@ mod tests {
                 expiry: NaiveDate::from_ymd_opt(2032, 1, 1).unwrap(),
                 deadline: 2030,
                 algorithm: AlgorithmId::Rsa { min_bits: 2048 },
+            },
+            FindingKind::UnparseableCertificate { depth: 1 },
+            FindingKind::WeakCertificateSignature {
+                position: ChainPosition::Leaf,
+                algorithm: "sha1WithRSAEncryption".into(),
+            },
+            FindingKind::ExpiredCertificate {
+                position: ChainPosition::Leaf,
+                expiry: NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
             },
         ];
         for kind in &kinds {

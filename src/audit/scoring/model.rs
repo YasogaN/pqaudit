@@ -1,3 +1,4 @@
+use crate::audit::cert_chain::CertChainReport;
 use crate::audit::findings::{FindingKind, Severity};
 use crate::audit::tables::DeadlineTable;
 use crate::ProbeResults;
@@ -24,6 +25,11 @@ pub struct ScoringResult {
 pub trait ScoringModel: Send + Sync {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
-    fn score(&self, probe: &ProbeResults, table: &dyn DeadlineTable) -> ScoringResult;
+    fn score(
+        &self,
+        probe: &ProbeResults,
+        cert_chain: Option<&CertChainReport>,
+        table: &dyn DeadlineTable,
+    ) -> ScoringResult;
     fn severity(&self, finding: &FindingKind) -> Severity;
 }

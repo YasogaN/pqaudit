@@ -1,3 +1,4 @@
+use crate::audit::cert_chain::{cert_chain_notes, cert_chain_points, CertChainReport};
 use crate::audit::findings::{FindingKind, Severity};
 use crate::audit::scoring::model::{CategoryScore, ScoringModel, ScoringResult};
 use crate::audit::tables::DeadlineTable;
@@ -49,7 +50,12 @@ impl ScoringModel for FipsBinaryGatesModel {
         "FIPS binary-gates scoring model — non-FIPS primitives score 0"
     }
 
-    fn score(&self, probe: &ProbeResults, _table: &dyn DeadlineTable) -> ScoringResult {
+    fn score(
+        &self,
+        probe: &ProbeResults,
+        cert_chain: Option<&CertChainReport>,
+        _table: &dyn DeadlineTable,
+    ) -> ScoringResult {
         let (ke_points, tls_points, cs_points, downgrade_pts) = match &probe.pqc_handshake {
             Ok(hs) => {
                 let ke = fips_key_exchange_points(hs.negotiated_group.code_point);
@@ -60,9 +66,16 @@ impl ScoringModel for FipsBinaryGatesModel {
             }
             Err(_) => (0, 0, 0, downgrade_points(&probe.downgrade)),
         };
+        let (cert_points, cert_notes) = match cert_chain {
+            Some(chain) => (cert_chain_points(chain), cert_chain_notes(chain)),
+            None => (0, vec!["no certificate chain was returned".into()]),
+        };
 
-        let raw_total =
-            ke_points as u16 + tls_points as u16 + cs_points as u16 + downgrade_pts as u16;
+        let raw_total = ke_points as u16
+            + tls_points as u16
+            + cs_points as u16
+            + cert_points as u16
+            + downgrade_pts as u16;
         let total = raw_total.min(100) as u8;
 
         ScoringResult {
@@ -87,9 +100,9 @@ impl ScoringModel for FipsBinaryGatesModel {
             },
             cert_chain: CategoryScore {
                 name: "cert_chain".into(),
-                points: 0,
+                points: cert_points,
                 max_points: 15,
-                notes: vec!["cert chain not audited yet".into()],
+                notes: cert_notes,
             },
             downgrade_posture: CategoryScore {
                 name: "downgrade_posture".into(),
@@ -110,6 +123,9 @@ impl ScoringModel for FipsBinaryGatesModel {
             FindingKind::DowngradeAccepted => Severity::Error,
             FindingKind::TlsVersionInsufficient { .. } => Severity::Error,
             FindingKind::CertExpiresAfterDeadline { .. } => Severity::Warning,
+            FindingKind::UnparseableCertificate { .. } => Severity::Error,
+            FindingKind::WeakCertificateSignature { .. } => Severity::Error,
+            FindingKind::ExpiredCertificate { .. } => Severity::Error,
         }
     }
 }
@@ -150,7 +166,7 @@ mod tests {
         let model = FipsBinaryGatesModel;
         let table = FipsTable;
         let probe = pqc_probe_result(0x11EC); // X25519MLKEM768 — FIPS approved
-        let result = model.score(&probe, &table);
+        let result = model.score(&probe, None, &table);
         assert_eq!(result.key_exchange.points, 50);
     }
 
@@ -165,7 +181,7 @@ mod tests {
                 name: "TLS_CHACHA20_POLY1305_SHA256".into(),
             };
         }
-        let result = model.score(&probe, &table);
+        let result = model.score(&probe, None, &table);
         assert_eq!(result.cipher_suite.points, 0);
     }
 }

@@ -56,7 +56,7 @@ pub enum KeyInfo {
     Ec { curve: String },
     Ed25519,
     Ed448,
-    MlKem { level: u8 },
+    MlKem { level: u16 },
     MlDsa { level: u8 },
     SlhDsa { level: u8 },
     Unknown,

@@ -1,3 +1,4 @@
+use crate::audit::cert_chain::{cert_chain_notes, cert_chain_points, CertChainReport};
 use crate::audit::findings::{FindingKind, Severity};
 use crate::audit::scoring::model::{CategoryScore, ScoringModel, ScoringResult};
 use crate::audit::tables::DeadlineTable;
@@ -77,8 +78,12 @@ impl ScoringModel for NistWeightedModel {
         "NIST IR 8547-aligned weighted scoring model for PQC readiness (0-100)"
     }
 
-    fn score(&self, probe: &ProbeResults, _table: &dyn DeadlineTable) -> ScoringResult {
-        // TODO Task 7: _table will be used for cert chain scoring and cipher suite timeline multiplier
+    fn score(
+        &self,
+        probe: &ProbeResults,
+        cert_chain: Option<&CertChainReport>,
+        _table: &dyn DeadlineTable,
+    ) -> ScoringResult {
         let current_year = chrono::Utc::now().year() as u32;
 
         let (ke_points, tls_points, cs_points, downgrade_pts) = match &probe.pqc_handshake {
@@ -95,10 +100,16 @@ impl ScoringModel for NistWeightedModel {
             }
             Err(_) => (0, 0, 0, downgrade_points(&probe.downgrade)),
         };
+        let (cert_points, cert_notes) = match cert_chain {
+            Some(chain) => (cert_chain_points(chain), cert_chain_notes(chain)),
+            None => (0, vec!["no certificate chain was returned".into()]),
+        };
 
-        let raw_total =
-            ke_points as u16 + tls_points as u16 + cs_points as u16 + downgrade_pts as u16;
-        // cert_chain is 0 until Task 7
+        let raw_total = ke_points as u16
+            + tls_points as u16
+            + cs_points as u16
+            + cert_points as u16
+            + downgrade_pts as u16;
         let total = raw_total.min(100) as u8;
 
         ScoringResult {
@@ -123,9 +134,9 @@ impl ScoringModel for NistWeightedModel {
             },
             cert_chain: CategoryScore {
                 name: "cert_chain".into(),
-                points: 0,
+                points: cert_points,
                 max_points: 15,
-                notes: vec!["cert chain not audited yet".into()],
+                notes: cert_notes,
             },
             downgrade_posture: CategoryScore {
                 name: "downgrade_posture".into(),
@@ -146,6 +157,9 @@ impl ScoringModel for NistWeightedModel {
             FindingKind::DowngradeAccepted => Severity::Error,
             FindingKind::TlsVersionInsufficient { .. } => Severity::Error,
             FindingKind::CertExpiresAfterDeadline { .. } => Severity::Warning,
+            FindingKind::UnparseableCertificate { .. } => Severity::Error,
+            FindingKind::WeakCertificateSignature { .. } => Severity::Error,
+            FindingKind::ExpiredCertificate { .. } => Severity::Error,
         }
     }
 }
@@ -186,7 +200,7 @@ mod tests {
         let model = NistWeightedModel;
         let table = NistIr8547Table;
         let probe = pqc_probe_result(0x11EC, false);
-        let result = model.score(&probe, &table);
+        let result = model.score(&probe, None, &table);
         assert_eq!(result.key_exchange.points, 50);
     }
 
@@ -195,7 +209,7 @@ mod tests {
         let model = NistWeightedModel;
         let table = NistIr8547Table;
         let probe = pqc_probe_result(0x11EC, true);
-        let result = model.score(&probe, &table);
+        let result = model.score(&probe, None, &table);
         assert_eq!(result.key_exchange.points, 40);
     }
 
@@ -204,7 +218,7 @@ mod tests {
         let model = NistWeightedModel;
         let table = NistIr8547Table;
         let probe = pqc_probe_result(0x001D, false);
-        let result = model.score(&probe, &table);
+        let result = model.score(&probe, None, &table);
         assert_eq!(result.key_exchange.points, 0);
     }
 
@@ -223,7 +237,7 @@ mod tests {
         let model = NistWeightedModel;
         let table = NistIr8547Table;
         let probe = pqc_probe_result(0x11EC, false);
-        let result = model.score(&probe, &table);
+        let result = model.score(&probe, None, &table);
         assert!(result.total <= 100);
     }
 }
@@ -266,7 +280,7 @@ mod property_tests {
             let model = NistWeightedModel;
             let table = NistIr8547Table;
             let probe = make_probe(group_code, hrr);
-            let result = model.score(&probe, &table);
+            let result = model.score(&probe, None, &table);
             prop_assert!(result.total <= 100, "score {} > 100", result.total);
         }
     }
