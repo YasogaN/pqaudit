@@ -117,7 +117,7 @@ impl PqauditMcpServer {
     /// Scan a TLS endpoint and return a CycloneDX CBOM (with full cipher enumeration).
     #[tool(
         name = "get_cbom",
-        description = "Scan a TLS endpoint with full cipher enumeration and return a CycloneDX 1.5 CBOM in JSON format."
+        description = "Scan a TLS endpoint with full cipher enumeration and return a CycloneDX 1.6 CBOM in JSON format."
     )]
     async fn get_cbom(&self, Parameters(params): Parameters<GetCbomParams>) -> Json<TextResult> {
         let config = crate::scanner::ScanConfig {
