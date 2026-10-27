@@ -26,7 +26,8 @@ pub async fn run(cli: Cli) -> i32 {
                 targets.extend(
                     content
                         .lines()
-                        .filter(|l| !l.trim().is_empty())
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty())
                         .map(str::to_string),
                 );
             }
@@ -289,7 +290,7 @@ mod tests {
         std::fs::write(
             &targets,
             format!(
-                "127.0.0.1:{}\n\n127.0.0.1:{}\n",
+                "  127.0.0.1:{}  \n\n127.0.0.1:{}\n",
                 server.port(),
                 server.port()
             ),
