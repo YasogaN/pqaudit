@@ -147,16 +147,28 @@ pub fn build_mcp_server() -> PqauditMcpServer {
     PqauditMcpServer::new()
 }
 
-/// Run the MCP server over stdio until the transport closes.
-pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// Run the MCP server over an arbitrary reader/writer pair.
+///
+/// This is public so tests (and embedders) can drive the server over an
+/// in-memory transport instead of process stdio.
+pub async fn run_mcp_server_with<R, W>(
+    reader: R,
+    writer: W,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+where
+    R: tokio::io::AsyncRead + Send + Unpin + 'static,
+    W: tokio::io::AsyncWrite + Send + Unpin + 'static,
+{
     use rmcp::ServiceExt as _;
     let server = build_mcp_server();
-    server
-        .serve(rmcp::transport::stdio())
-        .await?
-        .waiting()
-        .await?;
+    server.serve((reader, writer)).await?.waiting().await?;
     Ok(())
+}
+
+/// Run the MCP server over stdio until the transport closes.
+pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let (stdin, stdout) = rmcp::transport::stdio();
+    run_mcp_server_with(stdin, stdout).await
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -189,5 +201,107 @@ mod tests {
         let server = build_mcp_server();
         let info = server.get_info();
         assert_eq!(info.server_info.name, "pqaudit");
+    }
+
+    #[test]
+    fn default_timeout_is_5000ms() {
+        assert_eq!(default_timeout_ms(), 5000);
+    }
+
+    #[test]
+    fn server_default_and_builder_are_equivalent() {
+        let _ = PqauditMcpServer::default();
+        let _ = build_mcp_server();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_mcp_server_with_exits_on_transport_eof() {
+        let (server_read, client_write) = tokio::io::duplex(1024);
+        let (_client_read, server_write) = tokio::io::duplex(1024);
+        drop(client_write);
+        // EOF on the transport should cause the server loop to finish.
+        let _ = run_mcp_server_with(server_read, server_write).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_mcp_server_with_completes_initialize_handshake() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let (server_read, mut client_write) = tokio::io::duplex(8192);
+        let (client_read, server_write) = tokio::io::duplex(8192);
+        let task =
+            tokio::spawn(async move { run_mcp_server_with(server_read, server_write).await });
+
+        let initialize = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1\"}}}\n";
+        client_write.write_all(initialize).await.unwrap();
+        let mut reader = BufReader::new(client_read);
+        let mut line = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            reader.read_line(&mut line),
+        )
+        .await
+        .expect("initialize response timed out")
+        .unwrap();
+        assert!(line.contains("result"), "unexpected response: {line}");
+
+        let initialized = b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n";
+        client_write.write_all(initialized).await.unwrap();
+        drop(client_write);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("server did not stop")
+            .unwrap();
+        assert!(result.is_ok(), "server returned: {result:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scan_endpoint_tool_returns_json() {
+        use crate::test_support::tls_server;
+        use rustls::crypto::aws_lc_rs;
+        let listener = tls_server(aws_lc_rs::default_provider(), &[&rustls::version::TLS13]).await;
+        let server = build_mcp_server();
+        let response = server
+            .scan_endpoint(Parameters(ScanEndpointParams {
+                target: format!("127.0.0.1:{}", listener.port()),
+                timeout_ms: 2000,
+                full_scan: false,
+            }))
+            .await;
+        let json: serde_json::Value = serde_json::from_str(&response.0.content).unwrap();
+        assert!(json["targets"].is_array());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn compare_endpoints_tool_adds_comparison() {
+        use crate::test_support::tls_server;
+        use rustls::crypto::aws_lc_rs;
+        let listener = tls_server(aws_lc_rs::default_provider(), &[&rustls::version::TLS13]).await;
+        let server = build_mcp_server();
+        let target = format!("127.0.0.1:{}", listener.port());
+        let response = server
+            .compare_endpoints(Parameters(CompareEndpointsParams {
+                targets: vec![target.clone(), target],
+                timeout_ms: 2000,
+            }))
+            .await;
+        let json: serde_json::Value = serde_json::from_str(&response.0.content).unwrap();
+        assert!(json["comparison"].is_object());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_cbom_tool_returns_cyclonedx() {
+        use crate::test_support::tls_server;
+        use rustls::crypto::aws_lc_rs;
+        let listener = tls_server(aws_lc_rs::default_provider(), &[&rustls::version::TLS13]).await;
+        let server = build_mcp_server();
+        let response = server
+            .get_cbom(Parameters(GetCbomParams {
+                target: format!("127.0.0.1:{}", listener.port()),
+                timeout_ms: 2000,
+            }))
+            .await;
+        let json: serde_json::Value = serde_json::from_str(&response.0.content).unwrap();
+        assert_eq!(json["bomFormat"], "CycloneDX");
     }
 }
