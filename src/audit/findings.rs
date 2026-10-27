@@ -215,4 +215,112 @@ mod tests {
         };
         assert_eq!(f.sarif_rule_id(), "PQA006");
     }
+
+    #[test]
+    fn every_finding_kind_has_display_text_and_a_stable_rule_id() {
+        use crate::{AlgorithmId, CipherSuite, KeyInfo, NamedGroup, TlsVersion};
+        use chrono::NaiveDate;
+
+        let group = NamedGroup {
+            code_point: 0x001D,
+            name: "x25519".into(),
+            is_pqc: false,
+        };
+        let cases = vec![
+            (
+                FindingKind::ClassicalKeyExchangeOnly {
+                    group: group.clone(),
+                },
+                "PQA001",
+            ),
+            (
+                FindingKind::HybridKeyExchangeHrrRequired { group },
+                "PQA002",
+            ),
+            (
+                FindingKind::DeprecatedPqcDraftCodepoint { code_point: 0x6399 },
+                "PQA003",
+            ),
+            (
+                FindingKind::WeakSymmetricCipher {
+                    suite: CipherSuite {
+                        id: 0x000A,
+                        name: "3DES".into(),
+                    },
+                },
+                "PQA004",
+            ),
+            (
+                FindingKind::ClassicalCertificate {
+                    position: ChainPosition::Leaf,
+                    key: KeyInfo::Rsa { bits: 2048 },
+                    deadline: 2030,
+                },
+                "PQA005",
+            ),
+            (
+                FindingKind::ClassicalCertificate {
+                    position: ChainPosition::Intermediate { depth: 1 },
+                    key: KeyInfo::Ec {
+                        curve: "P-256".into(),
+                    },
+                    deadline: 2035,
+                },
+                "PQA006",
+            ),
+            (FindingKind::DowngradeAccepted, "PQA007"),
+            (
+                FindingKind::TlsVersionInsufficient {
+                    max_version: TlsVersion::Tls12,
+                },
+                "PQA008",
+            ),
+            (
+                FindingKind::CertExpiresAfterDeadline {
+                    expiry: NaiveDate::from_ymd_opt(2032, 1, 1).unwrap(),
+                    deadline: 2030,
+                    algorithm: AlgorithmId::Rsa { min_bits: 2048 },
+                },
+                "PQA009",
+            ),
+            (FindingKind::UnparseableCertificate { depth: 2 }, "PQA010"),
+            (
+                FindingKind::WeakCertificateSignature {
+                    position: ChainPosition::Root,
+                    algorithm: "sha1WithRSAEncryption".into(),
+                },
+                "PQA011",
+            ),
+            (
+                FindingKind::ExpiredCertificate {
+                    position: ChainPosition::Leaf,
+                    expiry: NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+                },
+                "PQA012",
+            ),
+            (FindingKind::ClassicalFallbackAccepted, "PQA013"),
+            (
+                FindingKind::LegacyTlsProtocol {
+                    version: TlsVersion::Tls10,
+                },
+                "PQA014",
+            ),
+            (
+                FindingKind::CertificateValidationFailed {
+                    reason: "untrusted".into(),
+                },
+                "PQA015",
+            ),
+        ];
+
+        for (kind, rule_id) in cases {
+            let text = kind.to_string();
+            assert!(!text.is_empty(), "missing display text for {kind:?}");
+            let finding = Finding {
+                kind,
+                severity: Severity::Warning,
+            };
+            assert_eq!(finding.sarif_rule_id(), rule_id);
+        }
+    }
 }

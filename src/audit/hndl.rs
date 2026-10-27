@@ -169,4 +169,43 @@ mod tests {
         let assessment = assess_hndl(0x001D, 2025, 2030, Some(2029));
         assert_eq!(assessment.rating, HndlRating::High);
     }
+
+    #[test]
+    fn model_name_is_stable() {
+        assert_eq!(DefaultHndlModel.name(), "default");
+    }
+
+    #[test]
+    fn classical_cert_before_q_day_reduces_high_to_medium() {
+        // exposure = 3 years → base High; cert expiry forces rekeying → Medium.
+        let assessment = assess_hndl(0x001D, 2027, 2030, Some(2029));
+        assert_eq!(assessment.rating, HndlRating::Medium);
+    }
+
+    #[test]
+    fn classical_cert_before_q_day_keeps_medium_medium() {
+        // exposure = 1 year → base Medium; reduction is already at the floor.
+        let assessment = assess_hndl(0x001D, 2029, 2030, Some(2029));
+        assert_eq!(assessment.rating, HndlRating::Medium);
+    }
+
+    #[test]
+    fn classical_without_cert_expiry_uses_base_rating() {
+        assert_eq!(
+            assess_hndl(0x001D, 2028, 2030, None).rating,
+            HndlRating::High
+        );
+        assert_eq!(
+            assess_hndl(0x001D, 2029, 2030, None).rating,
+            HndlRating::Medium
+        );
+    }
+
+    #[test]
+    fn extended_hybrid_group_set_is_recognised() {
+        for code in [0x11E9, 0x11EA, 0x11EE] {
+            let assessment = assess_hndl(code, 2026, 2030, None);
+            assert_eq!(assessment.rating, HndlRating::Medium);
+        }
+    }
 }

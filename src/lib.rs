@@ -413,6 +413,9 @@ mod tests {
     fn tls_version_display() {
         assert_eq!(TlsVersion::Tls13.to_string(), "TLS 1.3");
         assert_eq!(TlsVersion::Tls12.to_string(), "TLS 1.2");
+        assert_eq!(TlsVersion::Tls11.to_string(), "TLS 1.1");
+        assert_eq!(TlsVersion::Tls10.to_string(), "TLS 1.0");
+        assert_eq!(TlsVersion::Unknown(0x0300).to_string(), "Unknown(0x0300)");
     }
 
     #[test]
