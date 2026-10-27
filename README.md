@@ -4,22 +4,21 @@
 
 # pqaudit
 
-pqaudit probes any TLS endpoint for post-quantum readiness and scores it against NIST IR 8547,
-CNSA 2.0, and FIPS 140-3 — single binary, CI-native, CBOM output.
+pqaudit probes any TLS endpoint for post-quantum readiness and scores it against NIST IR 8547 (draft), CNSA 2.0, and FIPS 140-3 — single binary, CI-native, CBOM output.
 
 ```sh
 $ pqaudit -o human cloudflare.com
-pqaudit 0.1.0 — 2026-03-19T14:30:50Z
+pqaudit 0.3.0 — 2026-10-27T10:30:00Z
 Compliance mode: NIST IR 8547
 
-  ● cloudflare.com:443  score: 70/100
+  ● cloudflare.com:443  score: 85/100
     HNDL: Medium
     ! [PQA002] Hybrid PQC key exchange requires HelloRetryRequest (group: X25519MLKEM768)
-    ! [PQA005] Classical certificate (Leaf) with Ec { curve: "P-256" } deprecated for new use by 2030; disallowed after 2035
-    ! [PQA005] Classical certificate (Intermediate { depth: 1 }) with Ec { curve: "P-256" } deprecated for new use by 2030; disallowed after 2035
-    ! [PQA005] Classical certificate (Root) with Ec { curve: "P-384" } deprecated for new use by 2030; disallowed after 2035
-    ✗ [PQA007] Server accepted TLS downgrade below 1.3
+    ! [PQA005] Classical certificate (Leaf) with Ec { curve: "P-256" } must migrate by 2035
+    ! [PQA013] Server accepts a classical-only TLS 1.3 key exchange (PQC is not enforced)
 ```
+
+The probe completes a real rustls/aws-lc-rs handshake, reads the negotiated group directly from the session, and separately tests whether the server still accepts a classical-only TLS 1.3 key exchange, TLS 1.2 downgrades, and legacy TLS 1.0/1.1.
 
 ---
 
@@ -27,44 +26,44 @@ Compliance mode: NIST IR 8547
 
 ### Probing
 
-- **PQC handshake** — connects with `X25519MLKEM768` and `MLKEM1024` key share offers via
-  rustls and aws-lc-rs; reports whether the server negotiated hybrid or classical key exchange
-- **Cipher suite enumeration** — exhaustively tests supported TLS 1.3 and TLS 1.2 cipher
-  suites via raw ClientHello crafting (`--full-scan`)
-- **Downgrade detection** — probes with a classical-only ClientHello to detect whether the
-  server accepts non-PQC connections
-- **HelloRetryRequest detection** — identifies servers that require a retry to negotiate PQC
-  groups
-- **STARTTLS** — SMTP, IMAP, and POP3 protocol upgrade before TLS probe via URL schemes
+- **Real PQC handshake** — completes a rustls/aws-lc-rs handshake with the provider's post-quantum preference (`X25519MLKEM768`) and reads the negotiated key-exchange group directly from the completed session.
+- **Classical fallback check** — separately attempts a TLS 1.3 handshake using only classical groups, so “PQC available” is distinguished from “PQC enforced”.
+- **Cipher suite enumeration** — exhaustively probes TLS 1.3 and TLS 1.2 cipher suites via raw ClientHellos (`--full-scan`).
+- **Downgrade detection** — probes with a classical-only TLS 1.2 ClientHello to detect whether the server accepts a downgrade.
+- **HelloRetryRequest detection** — identifies servers that require an HRR to negotiate a PQC group.
+- **Legacy protocol detection** — checks whether TLS 1.0 or TLS 1.1 is still accepted.
+- **STARTTLS** — performs the SMTP, IMAP, or POP3 upgrade before the TLS probe via URL schemes; implicit TLS variants (`smtps://`, `imaps://`, `pop3s://`, `ldaps://`) connect directly.
+- **Resilient auditing** — if verified certificate validation fails, the probe retries without validation, captures the chain, and reports the validation error as a finding instead of losing the scan.
+- **Private CAs** — `--ca-file <pem-or-der>` adds trust anchors for internal endpoints; `--insecure` skips validation entirely (the chain is still parsed and audited).
+
+### Certificate auditing
+
+- Parses RSA modulus bits, DSA, NIST EC curves, Ed25519/Ed448, ML-KEM, ML-DSA, and SLH-DSA subject public keys.
+- Reports classical certificate keys against the active compliance deadlines, weak MD5/SHA-1 signatures, expired certificates, unparseable chain entries, and certificates that outlive their algorithm deadline.
+- Scores the chain out of 15 points: 15 for an all-PQC chain, 10 when the leaf is PQC but a CA is classical, 5 when a PQC CA signs a classical leaf, and 0 for a fully classical chain.
 
 ### Scoring & Risk
 
-- **0-100 score** — weighted rubric across five categories: key exchange (50 pts), TLS
-  version (15), cipher suite (15), certificate chain (15), downgrade posture (5)
-- **HNDL risk** — rates harvest-now-decrypt-later exposure as NONE / LOW / MEDIUM / HIGH /
-  CRITICAL based on algorithm longevity; use `--sensitivity <low|medium|high|critical>` to
-  incorporate data classification into the rating (default: unrated)
-- **Compliance modes** — `nist` (NIST IR 8547), `cnsa2` (NSA CNSA 2.0), `fips` (FIPS 140-3)
+- **0-100 score** — weighted rubric across five categories: key exchange (50 pts), TLS version (15), cipher suite (15), certificate chain (15), downgrade/PQC-enforcement posture (5).
+- **HNDL risk** — rates harvest-now-decrypt-later exposure as NONE / LOW / MEDIUM / HIGH / CRITICAL based on algorithm longevity.
+- **Compliance modes** — `nist` (NIST IR 8547 draft), `cnsa2` (NSA CNSA 2.0), `fips` (FIPS 140-3 algorithm approvals).
+- **Stable rule IDs** — findings map to SARIF rules `PQA001`–`PQA015`, including classical fallback, legacy TLS, certificate validation, weak signatures, and expiry.
 
-> pqaudit tests what the **server** supports. Whether the calling client (browser, Go TLS
-> library, etc.) actually negotiates PQC is outside scope — check your client library's
-> version and cipher group configuration separately.
+> pqaudit tests what the **server** supports. Whether the calling client (browser, Go TLS library, etc.) actually negotiates PQC is outside scope — check your client library's version and cipher group configuration separately.
 
 ### Output
 
-- **Human-readable terminal output** — color-coded score, per-finding icons, HNDL rating
-- **JSON** (default) — structured report for programmatic consumption
-- **SARIF 2.1.0** — for GitHub Code Scanning and IDE integration
-- **CycloneDX 1.5 CBOM** — cryptographic bill of materials listing all observed algorithms
-- **Baseline diff** — compare current results against a saved baseline to detect regressions
+- **Human-readable terminal output** — color-coded score, per-finding icons, HNDL rating.
+- **JSON** (default) — structured report for programmatic consumption, including negotiated group, cipher suite, chain entries, fallback status, and legacy protocols.
+- **SARIF 2.1.0** — for GitHub Code Scanning and IDE integration.
+- **CycloneDX 1.6 CBOM** — cryptographic bill of materials listing observed key-exchange groups, cipher suites, and certificate key algorithms.
+- **Baseline diff** — compare current results against a saved baseline to detect regressions.
 
 ### Integration
 
-- **CI/CD gate** — exits 1 when score falls below a configurable threshold
-- **GitHub Actions** — publishes findings to GitHub Code Scanning via SARIF on every push
-- **MCP server** — exposes `scan_endpoint`, `compare_endpoints`, and `get_cbom` tools for
-  agent-driven workflows; disabled by default (opt in with `--features mcp` at build time to
-  avoid pulling `rmcp` and `schemars` into the CLI binary)
+- **CI/CD gate** — exits 1 when the score falls below a configurable threshold; exits 2 when every target fails to probe.
+- **GitHub Actions** — publishes findings to GitHub Code Scanning via SARIF on every push.
+- **MCP server** — exposes `scan_endpoint`, `compare_endpoints`, and `get_cbom` tools for agent-driven workflows; disabled by default (opt in with `--features mcp` at build time to avoid pulling `rmcp` and `schemars` into the CLI binary).
 
 ---
 
@@ -147,7 +146,7 @@ pqaudit -o human example.com:443
 # SARIF 2.1.0 (GitHub Code Scanning, IDEs)
 pqaudit -o sarif example.com:443 > results.sarif
 
-# CycloneDX 1.5 CBOM
+# CycloneDX 1.6 CBOM
 pqaudit -o cbom example.com:443 > cbom.json
 
 # Write output to a file instead of stdout
@@ -205,6 +204,26 @@ pqaudit --sni api.example.com 203.0.113.5:443
 pqaudit --timeout 10000 example.com:443
 ```
 
+### Private CAs and untrusted endpoints
+
+```sh
+# Add a PEM bundle or DER certificate as a trust anchor
+pqaudit --ca-file internal-ca.pem internal.example.com:443
+
+# Audit an endpoint with an expired/self-signed chain; the chain is still captured
+pqaudit --insecure staging.example.com:443
+```
+
+### Legacy TLS and fallback signals
+
+The normal probe already reports:
+
+- whether a PQC group was negotiated and whether it required an HRR,
+- whether the server still accepts a classical-only TLS 1.3 key exchange (`PQA013`),
+- whether TLS 1.2 downgrades are accepted (`PQA007`),
+- whether TLS 1.0/1.1 are still accepted (`PQA014`),
+- whether the verified chain failed validation (`PQA015`).
+
 ### MCP server mode
 
 ```sh
@@ -247,14 +266,13 @@ semantics and workflow examples.
 
 ### Compliance modes
 
-| Mode    | Standard     | Key requirement                                      |
-|---------|--------------|------------------------------------------------------|
-| `nist`  | NIST IR 8547 | Hybrid key exchange; classical algorithms deprecated |
-| `cnsa2` | NSA CNSA 2.0 | ML-KEM-1024 mandatory; exclusive PQC by 2033         |
-| `fips`  | FIPS 140-3   | FIPS-approved algorithms only; binary gate scoring   |
+| Mode    | Standard     | Key requirement |
+|---------|--------------|-----------------|
+| `nist`  | NIST IR 8547 (IPD) | 112-bit quantum-vulnerable algorithms deprecated after 2030 and disallowed after 2035; ≥128-bit variants disallowed after 2035. |
+| `cnsa2` | NSA CNSA 2.0 | New NSS acquisitions by 2027; exclusive use by 2030 for networking/signing and 2033 for web/OS/other systems; ML-KEM-1024 and ML-DSA-87 required. |
+| `fips`  | FIPS 140-3 | Algorithm-approval gates only. This mode does not apply NIST IR 8547 transition deadlines. |
 
-See [Compliance Modes](https://github.com/YasogaN/pqaudit/wiki/Compliance-Modes) for full
-timelines and algorithm tables.
+NIST IR 8547 is still an Initial Public Draft; the deadline table is centralised in `src/audit/tables/nist_ir8547.rs` so a final publication can be adopted in one place. See [Compliance Modes](https://github.com/YasogaN/pqaudit/wiki/Compliance-Modes) for the full tables.
 
 ---
 
@@ -308,6 +326,25 @@ jobs:
     sarif_file: ${{ steps.pqaudit.outputs.sarif-file }}
     category: pqc-audit
 ```
+
+---
+
+## Testing
+
+```sh
+# Unit + integration tests (in-process TLS/STARTTLS servers; no network required)
+cargo test --no-default-features
+cargo test --features mcp
+
+# Live smoke test against Cloudflare (requires network access)
+cargo test --features live-tests
+
+# 100% line-coverage check (excludes the test-only src/test_support.rs harness)
+cargo llvm-cov --no-default-features --features mcp --workspace --all-targets \
+  --ignore-filename-regex 'src/test_support.rs' --lcov --output-path lcov.info
+```
+
+The integration suite starts real rustls servers, including SMTP STARTTLS and HTTP-style raw ClientHello responders, so certificate capture, PQC negotiation, HRR detection, classical fallback, legacy probes, cipher enumeration, and error paths are exercised without external services.
 
 ---
 
