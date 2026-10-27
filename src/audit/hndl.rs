@@ -47,7 +47,8 @@ impl HndlModel for DefaultHndlModel {
             .map(|r| r.negotiated_group.code_point)
             .unwrap_or(0);
 
-        let exposure = (config.q_day_year as f32) - (config.current_year as f32);
+        let exposure = ((config.q_day_year as i64 - config.current_year as i64) as f32).max(0.0);
+        let q_day_passed = config.q_day_year <= config.current_year;
 
         let cert_before_q = config
             .cert_expiry_year
@@ -60,10 +61,18 @@ impl HndlModel for DefaultHndlModel {
         let rating = if is_pure_pqc {
             HndlRating::None
         } else if is_hybrid_pqc {
-            match exposure {
-                e if e < 2.0 => HndlRating::Low,
-                _ => HndlRating::Medium,
+            if q_day_passed {
+                HndlRating::Low
+            } else {
+                match exposure {
+                    e if e < 2.0 => HndlRating::Low,
+                    _ => HndlRating::Medium,
+                }
             }
+        } else if q_day_passed {
+            // Once Q-day is here (or already past), classical-only traffic has
+            // no quantum protection at all.
+            HndlRating::Critical
         } else {
             // Classical only — cert_before_q can reduce by one level
             let base_rating = match exposure {
@@ -199,6 +208,20 @@ mod tests {
             assess_hndl(0x001D, 2029, 2030, None).rating,
             HndlRating::Medium
         );
+    }
+
+    #[test]
+    fn q_day_in_the_past_is_critical_for_classical() {
+        let assessment = assess_hndl(0x001D, 2030, 2025, None);
+        assert_eq!(assessment.rating, HndlRating::Critical);
+        assert_eq!(assessment.exposure_window_years, 0.0);
+    }
+
+    #[test]
+    fn q_day_in_the_past_is_low_for_hybrid() {
+        let assessment = assess_hndl(0x11EC, 2030, 2025, None);
+        assert_eq!(assessment.rating, HndlRating::Low);
+        assert_eq!(assessment.exposure_window_years, 0.0);
     }
 
     #[test]
