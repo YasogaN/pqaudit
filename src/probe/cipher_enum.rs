@@ -200,6 +200,29 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enumerate_ciphers_uses_sni_override() {
+        use crate::test_support::{server_hello, sni_checking_server};
+
+        let matching = sni_checking_server(
+            "expected.example".into(),
+            server_hello(0x1302, Some(0x11EC), 0x0303, None),
+        )
+        .await;
+        let inv =
+            enumerate_ciphers("127.0.0.1", matching.port(), "expected.example", "", 200).await;
+        assert_eq!(inv.tls13_suites.len(), 1);
+
+        let mismatched = sni_checking_server(
+            "other.example".into(),
+            server_hello(0x1302, Some(0x11EC), 0x0303, None),
+        )
+        .await;
+        let inv =
+            enumerate_ciphers("127.0.0.1", mismatched.port(), "expected.example", "", 200).await;
+        assert!(inv.tls13_suites.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn enumerate_ciphers_stops_on_unoffered_suite() {
         use crate::test_support::{fixed_response_server, server_hello};
 
