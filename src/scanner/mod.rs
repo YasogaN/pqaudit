@@ -86,6 +86,7 @@ pub async fn scan(targets: Vec<String>, config: &ScanConfig) -> ScanReport {
     }
 
     let config = std::sync::Arc::new(config);
+    let concurrency = config.concurrency.max(1);
 
     let results: Vec<TargetReport> = futures::stream::iter(targets)
         .map(|target| {
@@ -95,7 +96,7 @@ pub async fn scan(targets: Vec<String>, config: &ScanConfig) -> ScanReport {
         // `buffered` keeps the input order while still running up to
         // `concurrency` probes at once. Report order must be stable for
         // comparisons, baselines, and human consumption.
-        .buffered(config.concurrency)
+        .buffered(concurrency)
         .collect()
         .await;
 
@@ -733,6 +734,15 @@ mod integration_tests {
         assert!(report.targets[0].error.is_some());
         assert_eq!(report.targets[1].port, fast.port());
         assert!(report.targets[1].error.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scan_handles_zero_concurrency_directly() {
+        let server = tls_server(aws_lc_rs::default_provider(), &[&rustls::version::TLS13]).await;
+        let mut cfg = insecure_config();
+        cfg.concurrency = 0;
+        let report = scan(vec![target(&server)], &cfg).await;
+        assert!(report.targets[0].error.is_none());
     }
 
     #[test]
