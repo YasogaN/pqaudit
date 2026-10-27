@@ -5,6 +5,7 @@ use crate::output::{
 };
 use crate::scanner::{scan, ScanConfig};
 use crate::ScanReport;
+use std::io::IsTerminal;
 
 /// Run the CLI workflow and return the process exit code.
 ///
@@ -76,12 +77,18 @@ pub async fn run(cli: Cli) -> i32 {
         report.comparison = Some(build_comparison(&report));
     }
 
-    let output_str = match cli.output {
+    let color_output = matches!(cli.output, OutputFormat::Human)
+        && cli.output_file.is_none()
+        && std::io::stdout().is_terminal();
+    let mut output_str = match cli.output {
         OutputFormat::Json => render_json(&report),
         OutputFormat::Sarif => render_sarif(&report),
         OutputFormat::Cbom => render_cbom(&report),
         OutputFormat::Human => render_human(&report, cli.compare),
     };
+    if matches!(cli.output, OutputFormat::Human) && !color_output {
+        output_str = crate::output::human::strip_ansi(&output_str);
+    }
 
     if let Some(path) = &cli.output_file {
         if let Err(e) = std::fs::write(path, &output_str) {
@@ -278,7 +285,14 @@ mod tests {
                 &format!("127.0.0.1:{}", server.port()),
             ]);
             assert_eq!(run(cli).await, 0);
-            assert!(!std::fs::read_to_string(output).unwrap().is_empty());
+            let rendered = std::fs::read_to_string(output).unwrap();
+            assert!(!rendered.is_empty());
+            if format == "human" {
+                assert!(
+                    !rendered.contains('\u{1b}'),
+                    "human file output has ANSI escapes"
+                );
+            }
         }
     }
 

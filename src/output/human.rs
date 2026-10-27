@@ -36,6 +36,27 @@ pub fn render_human(report: &ScanReport, compare_mode: bool) -> String {
     out
 }
 
+/// Remove ANSI SGR escape sequences from rendered terminal output.
+pub fn strip_ansi(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for next in chars.by_ref() {
+                    if next == 'm' {
+                        break;
+                    }
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn render_target(target: &TargetReport) -> String {
     let mut out = String::new();
 
@@ -179,6 +200,12 @@ mod tests {
             targets: vec![stub_target_report(score)],
             comparison: None,
         }
+    }
+
+    #[test]
+    fn strip_ansi_removes_color_codes() {
+        let colored = "\x1b[1mhello\x1b[0m \x1b[32mworld\x1b[39m";
+        assert_eq!(strip_ansi(colored), "hello world");
     }
 
     #[test]
