@@ -101,7 +101,11 @@ where
         "pop3" => pop3_upgrade(stream).await,
         "ldap" => ldap_upgrade(stream).await,
         // Implicit TLS — pass stream through unchanged
-        "smtps" | "imaps" | "pop3s" | "ldaps" | "https" | "http" | "" => Ok(stream),
+        "smtps" | "imaps" | "pop3s" | "ldaps" | "https" | "" => Ok(stream),
+        "http" => Err(ProbeError::StarttlsUpgradeFailed {
+            protocol: StarttlsProtocol::Other("http".into()),
+            reason: "http:// is not a TLS endpoint; use https:// or a STARTTLS scheme".into(),
+        }),
         other => Err(ProbeError::StarttlsUpgradeFailed {
             protocol: StarttlsProtocol::Other(other.to_string()),
             reason: format!("unknown scheme: {other}"),
@@ -609,9 +613,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_scheme_passes_through() {
+    async fn http_scheme_is_rejected() {
         let (client, _server) = tokio::io::duplex(64);
-        assert!(upgrade_to_tls("http", client, 80).await.is_ok());
+        let result = upgrade_to_tls("http", client, 80).await;
+        assert!(matches!(
+            result,
+            Err(ProbeError::StarttlsUpgradeFailed { .. })
+        ));
     }
 
     #[tokio::test]
