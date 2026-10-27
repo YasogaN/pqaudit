@@ -39,7 +39,16 @@ pub(crate) async fn connect(
     let stream = tcp_connect(host, port, timeout_ms)
         .await
         .map_err(|e| map_connect_error(e, host, port, timeout_ms))?;
-    starttls::upgrade_to_tls(scheme, stream, port).await
+    // STARTTLS reads/writes must respect the probe timeout too; otherwise a
+    // silent mail server can bypass --timeout entirely.
+    tokio::time::timeout(
+        std::time::Duration::from_millis(timeout_ms),
+        starttls::upgrade_to_tls(scheme, stream, port),
+    )
+    .await
+    .map_err(|_| ProbeError::Timeout {
+        after_ms: timeout_ms,
+    })?
 }
 
 /// Connect to `host:port` with per-address fallback.
@@ -149,6 +158,14 @@ mod tests {
     async fn tcp_connect_times_out_on_unroutable_address() {
         // RFC 5737 TEST-NET-1. This exercises the per-address timeout path.
         assert!(tcp_connect("192.0.2.1", 443, 10).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn connect_times_out_during_starttls_upgrade() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let err = connect("127.0.0.1", port, "smtp", 50).await.unwrap_err();
+        assert!(matches!(err, ProbeError::Timeout { after_ms: 50 }));
     }
 
     #[tokio::test]
