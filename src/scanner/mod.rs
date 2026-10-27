@@ -241,8 +241,13 @@ async fn scan_single(target: String, config: &ScanConfig) -> TargetReport {
             let (table, model) = compliance_pair(config.compliance.clone());
             let current_year = Utc::now().year_unsigned();
 
-            // Audit the certificate chain against the active compliance table.
-            let cert_chain = audit_chain(&pqc.cert_chain_der, table.as_ref(), current_year);
+            // Audit the certificate chain against the active compliance table,
+            // then align the embedded findings with the active scoring model so
+            // `cert_chain.findings` and top-level findings agree.
+            let mut cert_chain = audit_chain(&pqc.cert_chain_der, table.as_ref(), current_year);
+            for finding in &mut cert_chain.findings {
+                finding.severity = model.severity(&finding.kind);
+            }
             let cert_expiry_year = cert_chain.entries.first().map(|e| e.expiry_year);
 
             // Assemble ProbeResults for scoring and HNDL.
@@ -600,6 +605,23 @@ mod integration_tests {
             .findings
             .iter()
             .any(|f| matches!(f.kind, FindingKind::ClassicalFallbackAccepted)));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scan_restamps_cert_findings_for_cnsa2() {
+        use crate::audit::findings::{FindingKind, Severity};
+
+        let server = tls_server(aws_lc_rs::default_provider(), &[&rustls::version::TLS13]).await;
+        let mut cfg = insecure_config();
+        cfg.compliance = ComplianceMode::Cnsa2;
+        let report = scan(vec![target(&server)], &cfg).await;
+        let cert_chain = report.targets[0].cert_chain.as_ref().unwrap();
+        let classical = cert_chain
+            .findings
+            .iter()
+            .find(|f| matches!(f.kind, FindingKind::ClassicalCertificate { .. }))
+            .expect("classical certificate finding");
+        assert_eq!(classical.severity, Severity::Error);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
