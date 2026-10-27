@@ -136,6 +136,10 @@ mod tests {
             2000
         );
         assert_eq!(
+            info(AlgorithmId::Dh { min_bits: 1024 }).disallowed_year,
+            2000
+        );
+        assert_eq!(
             info(AlgorithmId::Dsa { min_bits: 2048 }).disallowed_year,
             2000
         );

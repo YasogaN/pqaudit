@@ -95,6 +95,7 @@ mod tests {
         for alg in [
             AlgorithmId::Rsa { min_bits: 1024 },
             AlgorithmId::Dh { min_bits: 1024 },
+            AlgorithmId::EcOther,
             AlgorithmId::Dsa { min_bits: 2048 },
             AlgorithmId::X25519,
             AlgorithmId::X448,
