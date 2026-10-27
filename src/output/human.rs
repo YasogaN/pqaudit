@@ -206,6 +206,7 @@ mod tests {
     fn strip_ansi_removes_color_codes() {
         let colored = "\x1b[1mhello\x1b[0m \x1b[32mworld\x1b[39m";
         assert_eq!(strip_ansi(colored), "hello world");
+        assert_eq!(strip_ansi("\x1bX plain"), "X plain");
     }
 
     #[test]

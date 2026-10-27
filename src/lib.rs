@@ -421,6 +421,43 @@ mod tests {
     }
 
     #[test]
+    fn algorithm_classification_helpers_cover_all_families() {
+        use AlgorithmId::*;
+        for alg in [
+            Rsa { min_bits: 2048 },
+            Dsa { min_bits: 2048 },
+            EcP256,
+            EcP384,
+            EcP521,
+            EcOther,
+            X25519,
+            X448,
+            Ed25519,
+            Ed448,
+            Dh { min_bits: 2048 },
+        ] {
+            assert!(alg.is_classical(), "{alg:?} should be classical");
+            assert!(!alg.is_pqc(), "{alg:?} should not be PQC");
+        }
+        for alg in [
+            MlKem512,
+            MlKem768,
+            MlKem1024,
+            MlDsa44,
+            MlDsa65,
+            MlDsa87,
+            SlhDsa { level: 3 },
+        ] {
+            assert!(alg.is_pqc(), "{alg:?} should be PQC");
+            assert!(!alg.is_classical(), "{alg:?} should not be classical");
+        }
+        assert!(!Aes256.is_pqc());
+        assert!(!Aes256.is_classical());
+        assert!(!Unknown.is_pqc());
+        assert!(!Unknown.is_classical());
+    }
+
+    #[test]
     fn probe_error_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<ProbeError>();
