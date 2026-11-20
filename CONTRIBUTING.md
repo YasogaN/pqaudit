@@ -81,21 +81,28 @@ cargo build
 
 ```sh
 # Unit and fixture-based integration tests (no network required)
-cargo test
+cargo test --locked --no-default-features
+cargo test --locked --features mcp
 
-# Live integration tests (requires network access to public hosts)
-cargo test --features live-tests
+# Live matrix against popular public endpoints (requires network access)
+cargo test --locked --features live-tests --test live_tests -- --nocapture
+
+# Verify crates.io packaging without uploading
+cargo publish --dry-run --locked
 ```
+
+The live suite runs nightly and on demand through the `Live TLS tests` workflow, separately from pull-request CI.
 
 ### Check formatting and lints
 
 ```sh
 cargo fmt --check
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
+cargo clippy --no-default-features --all-targets -- -D warnings
+cargo clippy --features live-tests --all-targets -- -D warnings
 ```
 
-All of the above must pass before a pull request will be accepted. The CI pipeline runs
-these checks automatically.
+All of the above must pass before a pull request will be accepted. The CI pipeline runs these checks automatically.
 
 ---
 
@@ -131,6 +138,33 @@ feat(probe): add TLS 1.2 record layer cipher enumeration
 fix(scoring): apply timeline multiplier for certs expiring after 2030
 docs: add STARTTLS usage examples to README
 ```
+
+---
+
+## Releases
+
+Releases are cut from `main` by pushing an annotated tag. The Release workflow bumps `Cargo.toml` and `Cargo.lock` to the tag version, preserves the original tag message, runs the tests, builds all release targets, creates the GitHub release with `SHA256SUMS`, and publishes the crate to crates.io for stable tags.
+
+1. Ensure CI on `main` is green.
+2. Create an annotated tag with a meaningful message:
+
+```sh
+git tag -a v0.3.0 -m "pqaudit 0.3.0"
+```
+
+3. Push only that tag:
+
+```sh
+git push origin v0.3.0
+```
+
+4. Never run `git push --tags`; it would push unrelated local tags.
+
+- Stable tags (no `-`) publish to crates.io.
+- Prerelease tags such as `v1.0.0-beta.1` create a GitHub prerelease but skip crates.io.
+- Re-tagging preserves the tag message but not a GPG/SSH signature.
+- The workflow requires the `CARGO_REGISTRY_TOKEN` repository secret and permission to push the version-bump commit and tag.
+- Tests, builds, and `cargo publish` use `--locked`; the prepare step only updates the workspace package version in `Cargo.lock`.
 
 ---
 

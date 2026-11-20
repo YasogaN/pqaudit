@@ -16,12 +16,23 @@ pqaudit scans TLS endpoints and scores PQC readiness against NIST IR 8547 (draft
 ## Install
 
 ```bash
-# Linux/macOS
-curl -sSL https://github.com/YasogaN/pqaudit/releases/latest/download/pqaudit-$(uname -s | tr A-Z a-z)-$(uname -m) -o pqaudit && chmod +x pqaudit
+# Linux x86_64 (static musl)
+curl -sSfL https://github.com/YasogaN/pqaudit/releases/latest/download/pqaudit-linux-x86_64 -o pqaudit && chmod +x pqaudit
 
-# Cargo
+# Linux aarch64 (static musl)
+curl -sSfL https://github.com/YasogaN/pqaudit/releases/latest/download/pqaudit-linux-aarch64 -o pqaudit && chmod +x pqaudit
+
+# macOS Apple silicon
+curl -sSfL https://github.com/YasogaN/pqaudit/releases/latest/download/pqaudit-macos-aarch64 -o pqaudit && chmod +x pqaudit
+
+# macOS Intel
+curl -sSfL https://github.com/YasogaN/pqaudit/releases/latest/download/pqaudit-macos-x86_64 -o pqaudit && chmod +x pqaudit
+
+# Cargo (latest published release)
 cargo install pqaudit
 ```
+
+Windows users can download `pqaudit-windows-x86_64.exe` from the releases page.
 
 ## Quick scan
 

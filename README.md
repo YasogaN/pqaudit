@@ -63,7 +63,7 @@ The probe completes a real rustls/aws-lc-rs handshake, reads the negotiated grou
 
 - **CI/CD gate** — exits 1 when the score falls below a configurable threshold; exits 2 when every target fails to probe.
 - **GitHub Actions** — publishes findings to GitHub Code Scanning via SARIF on every push.
-- **MCP server** — exposes `scan_endpoint`, `compare_endpoints`, and `get_cbom` tools for agent-driven workflows; disabled by default (opt in with `--features mcp` at build time to avoid pulling `rmcp` and `schemars` into the CLI binary).
+- **MCP server** — exposes `scan_endpoint`, `compare_endpoints`, and `get_cbom` tools for agent-driven workflows; enabled by default. Build with `--no-default-features` to omit the `rmcp` and `schemars` dependencies.
 
 ---
 
@@ -72,8 +72,16 @@ The probe completes a real rustls/aws-lc-rs handshake, reads the negotiated grou
 ### Pre-built binary
 
 Download the latest release for your platform from the
-[Releases](https://github.com/YasogaN/pqaudit/releases) page. All binaries are statically
-linked with no runtime dependencies.
+[Releases](https://github.com/YasogaN/pqaudit/releases) page. Linux binaries are statically linked with musl; macOS and Windows binaries use their platform runtime.
+
+| Platform | Artifact |
+|---|---|
+| Linux x86_64 (musl, static) | `pqaudit-linux-x86_64` |
+| Linux aarch64 (musl, static) | `pqaudit-linux-aarch64` |
+| macOS Intel | `pqaudit-macos-x86_64` |
+| macOS Apple silicon | `pqaudit-macos-aarch64` |
+| Windows x86_64 | `pqaudit-windows-x86_64.exe` |
+| Checksums | `SHA256SUMS` |
 
 ```sh
 # Linux (x86_64)
@@ -81,6 +89,16 @@ curl -Lo pqaudit https://github.com/YasogaN/pqaudit/releases/latest/download/pqa
 chmod +x pqaudit
 sudo mv pqaudit /usr/local/bin/
 ```
+
+### From crates.io
+
+The crate is published as `pqaudit`. This installs the latest published release:
+
+```sh
+cargo install pqaudit
+```
+
+Stable releases are published to crates.io; prerelease tags only create a GitHub prerelease.
 
 ### From source
 
@@ -291,10 +309,12 @@ jobs:
     permissions:
       security-events: write
     steps:
-      - uses: YasogaN/pqaudit@v1
+      - uses: YasogaN/pqaudit@v0
         with:
           targets: api.example.com
 ```
+
+The action downloads the Linux x86_64 binary, so run it on `ubuntu-latest`.
 
 ### Inputs
 
@@ -314,7 +334,7 @@ jobs:
 ### Advanced usage
 
 ```yaml
-- uses: YasogaN/pqaudit@v1
+- uses: YasogaN/pqaudit@v0
   with:
     targets: api.example.com api2.example.com:8443
     compliance: cnsa2
@@ -333,11 +353,14 @@ jobs:
 
 ```sh
 # Unit + integration tests (in-process TLS/STARTTLS servers; no network required)
-cargo test --no-default-features
-cargo test --features mcp
+cargo test --locked --no-default-features
+cargo test --locked --features mcp
 
 # Live matrix against popular public endpoints (requires network access)
-cargo test --features live-tests --test live_tests -- --nocapture
+cargo test --locked --features live-tests --test live_tests -- --nocapture
+
+# Verify crates.io packaging without uploading
+cargo publish --dry-run --locked
 
 # 100% line-coverage check (excludes the test-only src/test_support.rs harness)
 cargo llvm-cov --no-default-features --features mcp --workspace --all-targets \

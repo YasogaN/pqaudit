@@ -12,6 +12,6 @@ jobs:
     permissions:
       security-events: write
     steps:
-      - uses: YasogaN/pqaudit@v1
+      - uses: YasogaN/pqaudit@v0
         with:
           targets: api.example.com
