@@ -1,0 +1,21 @@
+name: Live TLS tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Daily at 06:00 UTC. These tests depend on external endpoints, so they are
+    # kept out of PR CI and run here as an early-warning signal instead.
+    - cron: '0 6 * * *'
+
+concurrency:
+  group: live-tls-tests
+  cancel-in-progress: true
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --features live-tests --test live_tests -- --nocapture
