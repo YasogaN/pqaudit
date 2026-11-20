@@ -336,15 +336,15 @@ jobs:
 cargo test --no-default-features
 cargo test --features mcp
 
-# Live smoke test against Cloudflare (requires network access)
-cargo test --features live-tests
+# Live matrix against popular public endpoints (requires network access)
+cargo test --features live-tests --test live_tests -- --nocapture
 
 # 100% line-coverage check (excludes the test-only src/test_support.rs harness)
 cargo llvm-cov --no-default-features --features mcp --workspace --all-targets \
   --ignore-filename-regex 'src/test_support.rs' --lcov --output-path lcov.info
 ```
 
-The integration suite starts real rustls servers, including SMTP STARTTLS and HTTP-style raw ClientHello responders, so certificate capture, PQC negotiation, HRR detection, classical fallback, legacy probes, cipher enumeration, and error paths are exercised without external services.
+The integration suite starts real rustls servers, including SMTP STARTTLS and HTTP-style raw ClientHello responders, so certificate capture, PQC negotiation, HRR detection, classical fallback, legacy probes, cipher enumeration, and error paths are exercised without external services. The live suite probes Cloudflare, Google, AWS, Microsoft, Apple, Mozilla, GitHub, and Wikipedia, then checks TLS 1.3, PQC negotiation where expected, certificate capture, downgrade classification, the full scan pipeline, every output format, and the compiled CLI. It runs nightly and on demand via the `Live TLS tests` workflow, separately from PR CI.
 
 ---
 
