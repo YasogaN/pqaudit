@@ -395,15 +395,19 @@ fn generate_findings(
                 kind: f.kind.clone(),
             });
         }
-    }
 
-    // Downgrade findings
-    if matches!(probe.downgrade, DowngradeResult::Accepted { .. }) {
-        let kind = FindingKind::DowngradeAccepted;
-        findings.push(Finding {
-            severity: model.severity(&kind),
-            kind,
-        });
+        // A TLS 1.2 downgrade is only meaningful when the server actually
+        // negotiated TLS 1.3. A TLS 1.2-only server is reported through
+        // TlsVersionInsufficient instead.
+        if pqc.negotiated_version == TlsVersion::Tls13
+            && matches!(probe.downgrade, DowngradeResult::Accepted { .. })
+        {
+            let kind = FindingKind::DowngradeAccepted;
+            findings.push(Finding {
+                severity: model.severity(&kind),
+                kind,
+            });
+        }
     }
 
     findings
@@ -526,6 +530,38 @@ mod tests {
                 .iter()
                 .any(|f| matches!(f.kind, FindingKind::DowngradeAccepted)),
             "expected DowngradeAccepted finding"
+        );
+    }
+
+    #[test]
+    fn tls12_only_server_does_not_generate_downgrade_finding() {
+        let mut probe = make_probe(
+            true,
+            false,
+            DowngradeResult::Accepted {
+                negotiated_version: TlsVersion::Tls12,
+            },
+        );
+        if let Ok(pqc) = &mut probe.pqc_handshake {
+            pqc.negotiated_version = TlsVersion::Tls12;
+        }
+        let (_table, model) = compliance_pair(ComplianceMode::Nist);
+        let empty_chain = crate::audit::cert_chain::CertChainReport {
+            entries: vec![],
+            findings: vec![],
+        };
+        let findings = generate_findings(&probe, &empty_chain, model.as_ref());
+        assert!(
+            !findings
+                .iter()
+                .any(|f| matches!(f.kind, FindingKind::DowngradeAccepted)),
+            "a TLS 1.2-only server has no TLS 1.3 downgrade to report"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.kind, FindingKind::TlsVersionInsufficient { .. })),
+            "expected TlsVersionInsufficient instead"
         );
     }
 
