@@ -368,5 +368,4 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the f
 
 ---
 
-*Developed with AI assistance (Claude, Anthropic). Code reviewed and maintained by human
-contributors who take full responsibility for correctness and quality.*
+*Initially developed with Anthropic's Claude and Claude Code. Later development, hardening, and testing were assisted by DeepSeek V4.1 Flash, DeepSeek V4.1 Flash (1017), and OpenCode. Code reviewed and maintained by human contributors who take full responsibility for correctness and quality.*
