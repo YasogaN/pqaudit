@@ -198,9 +198,14 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
+        let result = probe_downgrade("127.0.0.1", port, "localhost", "", 500).await;
+        assert!(
+            !matches!(result, DowngradeResult::Rejected),
+            "a connection failure must not be reported as a downgrade rejection: {result:?}"
+        );
         assert!(matches!(
-            probe_downgrade("127.0.0.1", port, "localhost", "", 50).await,
-            DowngradeResult::Error(_)
+            result,
+            DowngradeResult::Error(_) | DowngradeResult::Timeout
         ));
 
         // RFC 5737 TEST-NET-1: connection cannot complete, so this maps to

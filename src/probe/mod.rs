@@ -133,8 +133,9 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         // `localhost` may resolve to ::1 first; the refused IPv6 attempt should
-        // fall back to 127.0.0.1.
-        let stream = tcp_connect("localhost", port, 1000).await.unwrap();
+        // fall back to 127.0.0.1. Windows can spend the per-address cap on the
+        // IPv6 attempt before trying IPv4, so allow a full 5 s budget.
+        let stream = tcp_connect("localhost", port, 5000).await.unwrap();
         drop(stream);
     }
 
