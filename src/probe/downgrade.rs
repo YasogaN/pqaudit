@@ -13,8 +13,16 @@ const CLASSICAL_SUITES: &[u16] = &[
 /// Classify a ServerResponse as a DowngradeResult.
 pub fn classify_downgrade(response: &ServerResponse) -> DowngradeResult {
     match response {
-        ServerResponse::ServerHello { tls_version, .. } => DowngradeResult::Accepted {
-            negotiated_version: TlsVersion::from_code(*tls_version),
+        // A ServerHello only counts as an accepted downgrade when it selected
+        // TLS 1.0-1.2. A TLS 1.3 ServerHello or HRR here is a protocol
+        // violation, not evidence that the server accepts TLS 1.2.
+        ServerResponse::ServerHello { tls_version, .. } => match *tls_version {
+            0x0301..=0x0303 => DowngradeResult::Accepted {
+                negotiated_version: TlsVersion::from_code(*tls_version),
+            },
+            other => DowngradeResult::Error(format!(
+                "unexpected ServerHello version 0x{other:04x} for a TLS 1.2-only probe"
+            )),
         },
         ServerResponse::Timeout => DowngradeResult::Timeout,
         ServerResponse::HandshakeFailure | ServerResponse::ConnectionClose => {
@@ -131,6 +139,26 @@ mod tests {
                 negotiated_version: TlsVersion::Tls11
             }
         );
+    }
+
+    #[test]
+    fn tls13_server_hello_is_not_accepted_as_downgrade() {
+        let r = ServerResponse::ServerHello {
+            selected_suite: 0x1302,
+            selected_group: None,
+            tls_version: 0x0304,
+        };
+        assert!(matches!(classify_downgrade(&r), DowngradeResult::Error(_)));
+    }
+
+    #[test]
+    fn unknown_server_hello_version_is_not_accepted_as_downgrade() {
+        let r = ServerResponse::ServerHello {
+            selected_suite: 0x002F,
+            selected_group: None,
+            tls_version: 0x0000,
+        };
+        assert!(matches!(classify_downgrade(&r), DowngradeResult::Error(_)));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

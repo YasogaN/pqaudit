@@ -69,7 +69,7 @@ fn parse_server_hello(bytes: &[u8]) -> Result<ServerResponse, String> {
     if body.len() < 2 + 32 + 1 {
         return Err("ServerHello body too short".into());
     }
-    let tls_version = u16::from_be_bytes([body[0], body[1]]);
+    let legacy_version = u16::from_be_bytes([body[0], body[1]]);
     // session_id
     let sid_len = body[34] as usize;
     let after_sid = 35 + sid_len;
@@ -78,15 +78,49 @@ fn parse_server_hello(bytes: &[u8]) -> Result<ServerResponse, String> {
     }
     let selected_suite = u16::from_be_bytes([body[after_sid], body[after_sid + 1]]);
 
-    // Extensions parsing for key_share group (optional — may not be present in minimal ServerHello)
+    // Extensions parsing (optional — may not be present in a minimal ServerHello).
     // after_sid + 2 (cipher suite) + 1 (compression) = after_sid + 3
-    let selected_group = parse_key_share_group(body, after_sid + 3);
+    let extensions_offset = after_sid + 3;
+    // TLS 1.3 ServerHellos carry legacy_version 0x0303 and put the real
+    // selected version in the supported_versions extension.
+    let tls_version = parse_supported_version(body, extensions_offset).unwrap_or(legacy_version);
+    let selected_group = parse_key_share_group(body, extensions_offset);
 
     Ok(ServerResponse::ServerHello {
         selected_suite,
         selected_group,
         tls_version,
     })
+}
+
+/// Try to extract the selected version from the supported_versions extension.
+/// Returns None if extensions are absent or the extension is not present.
+fn parse_supported_version(body: &[u8], extensions_offset: usize) -> Option<u16> {
+    if body.len() < extensions_offset + 2 {
+        return None; // no extensions
+    }
+    let ext_total_len =
+        u16::from_be_bytes([body[extensions_offset], body[extensions_offset + 1]]) as usize;
+    let mut pos = extensions_offset + 2;
+    let end = pos + ext_total_len;
+    if body.len() < end {
+        return None;
+    }
+    while pos + 4 <= end {
+        let ext_type = u16::from_be_bytes([body[pos], body[pos + 1]]);
+        let ext_len = u16::from_be_bytes([body[pos + 2], body[pos + 3]]) as usize;
+        pos += 4;
+        if pos + ext_len > end {
+            break;
+        }
+        // supported_versions extension type = 0x002b
+        // ServerHello: selected_version(2)
+        if ext_type == 0x002b && ext_len == 2 {
+            return Some(u16::from_be_bytes([body[pos], body[pos + 1]]));
+        }
+        pos += ext_len;
+    }
+    None
 }
 
 /// Try to extract the key_share group from ServerHello extensions.
@@ -414,6 +448,42 @@ mod tests {
         rec
     }
 
+    fn server_hello_with_supported_version(
+        selected_suite: u16,
+        legacy_version: u16,
+        selected_version: u16,
+    ) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(&legacy_version.to_be_bytes());
+        body.extend(std::iter::repeat_n(0u8, 32));
+        body.push(0); // session id
+        body.extend_from_slice(&selected_suite.to_be_bytes());
+        body.push(0); // compression
+        let mut exts = Vec::new();
+        exts.extend_from_slice(&0x002bu16.to_be_bytes()); // supported_versions
+        exts.extend_from_slice(&2u16.to_be_bytes());
+        exts.extend_from_slice(&selected_version.to_be_bytes());
+        body.extend_from_slice(&(exts.len() as u16).to_be_bytes());
+        body.extend_from_slice(&exts);
+
+        let mut hs = vec![
+            0x02,
+            ((body.len() >> 16) & 0xFF) as u8,
+            ((body.len() >> 8) & 0xFF) as u8,
+            (body.len() & 0xFF) as u8,
+        ];
+        hs.extend_from_slice(&body);
+        let mut rec = vec![
+            0x16,
+            0x03,
+            0x03,
+            ((hs.len() >> 8) & 0xFF) as u8,
+            (hs.len() & 0xFF) as u8,
+        ];
+        rec.extend_from_slice(&hs);
+        rec
+    }
+
     #[test]
     fn parses_handshake_failure_alert() {
         let bytes = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28];
@@ -473,6 +543,19 @@ mod tests {
             ServerResponse::ServerHello {
                 selected_suite: 0x1301,
                 selected_group: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_tls13_selected_version_from_supported_versions() {
+        let bytes = server_hello_with_supported_version(0x1302, 0x0303, 0x0304);
+        assert!(matches!(
+            parse_server_response(&bytes).unwrap(),
+            ServerResponse::ServerHello {
+                selected_suite: 0x1302,
+                tls_version: 0x0304,
                 ..
             }
         ));
