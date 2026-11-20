@@ -5,6 +5,26 @@ edition = "2021"
 rust-version = "1.85"
 license = "Apache-2.0"
 description = "TLS post-quantum readiness auditor"
+repository = "https://github.com/YasogaN/pqaudit"
+homepage = "https://github.com/YasogaN/pqaudit"
+documentation = "https://docs.rs/pqaudit"
+readme = "README.md"
+keywords = ["tls", "post-quantum", "pqc", "security", "scanner"]
+categories = [
+    "command-line-utilities",
+    "network-programming",
+    "cryptography",
+    "development-tools",
+]
+exclude = [
+    ".github/**",
+    "docs/**",
+    "examples/**",
+    "skills/**",
+    "action.yml",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+]
 
 [[bin]]
 name = "pqaudit"
