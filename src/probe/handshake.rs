@@ -846,10 +846,45 @@ mod tests {
         }
     }
 
+    impl tokio::io::AsyncWrite for FailingReader {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
     #[tokio::test]
     async fn read_tls_record_reports_read_errors() {
         let mut reader = FailingReader;
         assert_eq!(read_tls_record(&mut reader, 100).await, Err(ReadError::Io));
+    }
+
+    #[tokio::test]
+    async fn send_and_receive_reports_read_io_failure() {
+        let mut io = FailingReader;
+        assert!(matches!(
+            send_and_receive(&mut io, b"hello", 100).await,
+            ServerResponse::Error(_)
+        ));
+        io.flush().await.unwrap();
+        io.shutdown().await.unwrap();
     }
 
     #[tokio::test]

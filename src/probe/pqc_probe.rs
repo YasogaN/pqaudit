@@ -323,6 +323,23 @@ async fn handshake_with_fallback(
 /// Send a raw ClientHello and parse the initial ServerHello to extract the
 /// selected group and detect HelloRetryRequests.
 /// Returns `Ok(None)` when the server selected TLS 1.2 (no key_share group).
+fn raw_read_error(error: ReadError, timeout_ms: u64) -> ProbeError {
+    match error {
+        ReadError::Timeout => ProbeError::Timeout {
+            after_ms: timeout_ms,
+        },
+        ReadError::ConnectionClose => ProbeError::TlsHandshakeFailed {
+            reason: "connection closed before ServerHello".into(),
+        },
+        ReadError::Io => ProbeError::TlsHandshakeFailed {
+            reason: "I/O error while reading ServerHello".into(),
+        },
+        ReadError::WriteError => ProbeError::TlsHandshakeFailed {
+            reason: "failed to write ClientHello".into(),
+        },
+    }
+}
+
 async fn probe_raw_group(
     host: &str,
     port: u16,
@@ -332,29 +349,9 @@ async fn probe_raw_group(
     let hello = build_client_hello(sni, DEFAULT_CIPHER_SUITES, DEFAULT_NAMED_GROUPS, 0x0304);
     let mut stream = crate::probe::connect(host, port, &config.scheme, config.timeout_ms).await?;
 
-    let buf = match send_and_read_raw(&mut stream, &hello, config.timeout_ms).await {
-        Ok(buf) => buf,
-        Err(ReadError::Timeout) => {
-            return Err(ProbeError::Timeout {
-                after_ms: config.timeout_ms,
-            })
-        }
-        Err(ReadError::ConnectionClose) => {
-            return Err(ProbeError::TlsHandshakeFailed {
-                reason: "connection closed before ServerHello".into(),
-            })
-        }
-        Err(ReadError::Io) => {
-            return Err(ProbeError::TlsHandshakeFailed {
-                reason: "I/O error while reading ServerHello".into(),
-            })
-        }
-        Err(ReadError::WriteError) => {
-            return Err(ProbeError::TlsHandshakeFailed {
-                reason: "failed to write ClientHello".into(),
-            })
-        }
-    };
+    let buf = send_and_read_raw(&mut stream, &hello, config.timeout_ms)
+        .await
+        .map_err(|error| raw_read_error(error, config.timeout_ms))?;
 
     let response =
         parse_server_response(&buf).map_err(|e| ProbeError::TlsHandshakeFailed { reason: e })?;
@@ -371,7 +368,6 @@ async fn probe_raw_group(
         ServerResponse::HandshakeFailure => Err(ProbeError::TlsHandshakeFailed {
             reason: "server rejected all offered cipher suites".into(),
         }),
-        ServerResponse::Error(reason) => Err(ProbeError::TlsHandshakeFailed { reason }),
         _ => Err(ProbeError::TlsHandshakeFailed {
             reason: "server closed connection during handshake".into(),
         }),
@@ -856,6 +852,24 @@ mod tests {
             err,
             ProbeError::ConnectionRefused { .. } | ProbeError::Timeout { .. }
         ));
+    }
+
+    #[test]
+    fn raw_read_errors_map_to_probe_errors() {
+        assert!(matches!(
+            raw_read_error(ReadError::Timeout, 25),
+            ProbeError::Timeout { after_ms: 25 }
+        ));
+        for error in [
+            ReadError::ConnectionClose,
+            ReadError::Io,
+            ReadError::WriteError,
+        ] {
+            assert!(matches!(
+                raw_read_error(error, 25),
+                ProbeError::TlsHandshakeFailed { .. }
+            ));
+        }
     }
 
     #[test]
