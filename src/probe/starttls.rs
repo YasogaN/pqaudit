@@ -125,9 +125,7 @@ where
     let mut line = String::new();
 
     // 1. Read server greeting (220 ...)
-    buf.read_line(&mut line)
-        .await
-        .map_err(|e| smtp_err(e.to_string()))?;
+    buf.read_line(&mut line).await.map_err(smtp_io_err)?;
     if !line.starts_with("220") {
         return Err(smtp_err(format!("unexpected greeting: {}", line.trim())));
     }
@@ -136,19 +134,14 @@ where
     buf.get_mut()
         .write_all(b"EHLO pqaudit\r\n")
         .await
-        .map_err(|e| smtp_err(e.to_string()))?;
-    buf.get_mut()
-        .flush()
-        .await
-        .map_err(|e| smtp_err(e.to_string()))?;
+        .map_err(smtp_io_err)?;
+    buf.get_mut().flush().await.map_err(smtp_io_err)?;
 
     // 3. Read EHLO response (multi-line 250-... ending with 250 ...)
     let mut has_starttls = false;
     loop {
         line.clear();
-        buf.read_line(&mut line)
-            .await
-            .map_err(|e| smtp_err(e.to_string()))?;
+        buf.read_line(&mut line).await.map_err(smtp_io_err)?;
         if line.to_ascii_uppercase().contains("STARTTLS") {
             has_starttls = true;
         }
@@ -171,17 +164,12 @@ where
     buf.get_mut()
         .write_all(b"STARTTLS\r\n")
         .await
-        .map_err(|e| smtp_err(e.to_string()))?;
-    buf.get_mut()
-        .flush()
-        .await
-        .map_err(|e| smtp_err(e.to_string()))?;
+        .map_err(smtp_io_err)?;
+    buf.get_mut().flush().await.map_err(smtp_io_err)?;
 
     // 5. Read "220 Ready" (or equivalent 220 response)
     line.clear();
-    buf.read_line(&mut line)
-        .await
-        .map_err(|e| smtp_err(e.to_string()))?;
+    buf.read_line(&mut line).await.map_err(smtp_io_err)?;
     if !line.starts_with("220") {
         return Err(smtp_err(format!("STARTTLS rejected: {}", line.trim())));
     }
@@ -198,9 +186,7 @@ where
     let mut line = String::new();
 
     // 1. Read greeting: "* OK ..."
-    buf.read_line(&mut line)
-        .await
-        .map_err(|e| imap_err(e.to_string()))?;
+    buf.read_line(&mut line).await.map_err(imap_io_err)?;
     if !line.starts_with("* OK") {
         return Err(imap_err(format!("unexpected greeting: {}", line.trim())));
     }
@@ -209,19 +195,14 @@ where
     buf.get_mut()
         .write_all(b"A001 STARTTLS\r\n")
         .await
-        .map_err(|e| imap_err(e.to_string()))?;
-    buf.get_mut()
-        .flush()
-        .await
-        .map_err(|e| imap_err(e.to_string()))?;
+        .map_err(imap_io_err)?;
+    buf.get_mut().flush().await.map_err(imap_io_err)?;
 
     // 3. Read until the tagged response. Servers may send untagged
     // responses (for example "* CAPABILITY ...") before "A001 OK".
     loop {
         line.clear();
-        buf.read_line(&mut line)
-            .await
-            .map_err(|e| imap_err(e.to_string()))?;
+        buf.read_line(&mut line).await.map_err(imap_io_err)?;
         if line.starts_with("A001 OK") {
             break;
         }
@@ -249,9 +230,7 @@ where
     let mut line = String::new();
 
     // 1. Read greeting: "+OK ..."
-    buf.read_line(&mut line)
-        .await
-        .map_err(|e| pop3_err(e.to_string()))?;
+    buf.read_line(&mut line).await.map_err(pop3_io_err)?;
     if !line.starts_with("+OK") {
         return Err(pop3_err(format!("unexpected greeting: {}", line.trim())));
     }
@@ -260,17 +239,12 @@ where
     buf.get_mut()
         .write_all(b"STLS\r\n")
         .await
-        .map_err(|e| pop3_err(e.to_string()))?;
-    buf.get_mut()
-        .flush()
-        .await
-        .map_err(|e| pop3_err(e.to_string()))?;
+        .map_err(pop3_io_err)?;
+    buf.get_mut().flush().await.map_err(pop3_io_err)?;
 
     // 3. Read "+OK ..."
     line.clear();
-    buf.read_line(&mut line)
-        .await
-        .map_err(|e| pop3_err(e.to_string()))?;
+    buf.read_line(&mut line).await.map_err(pop3_io_err)?;
     if !line.starts_with("+OK") {
         return Err(pop3_err(format!("STLS rejected: {}", line.trim())));
     }
@@ -309,6 +283,18 @@ fn pop3_err(reason: String) -> ProbeError {
         protocol: StarttlsProtocol::Pop3,
         reason,
     }
+}
+
+fn smtp_io_err(error: std::io::Error) -> ProbeError {
+    smtp_err(error.to_string())
+}
+
+fn imap_io_err(error: std::io::Error) -> ProbeError {
+    imap_err(error.to_string())
+}
+
+fn pop3_io_err(error: std::io::Error) -> ProbeError {
+    pop3_err(error.to_string())
 }
 
 #[cfg(test)]
@@ -401,6 +387,48 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn protocol_io_errors_map_to_starttls_failures() {
+        assert!(matches!(
+            smtp_io_err(std::io::Error::other("boom")),
+            ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Smtp,
+                ..
+            }
+        ));
+        assert!(matches!(
+            imap_io_err(std::io::Error::other("boom")),
+            ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Imap,
+                ..
+            }
+        ));
+        assert!(matches!(
+            pop3_io_err(std::io::Error::other("boom")),
+            ProbeError::StarttlsUpgradeFailed {
+                protocol: StarttlsProtocol::Pop3,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn upgrade_to_tls_dispatches_imap_and_pop3() {
+        let (client, mut server) = tokio::io::duplex(4096);
+        server
+            .write_all(b"* OK ready\r\nA001 OK Begin TLS negotiation now\r\n")
+            .await
+            .unwrap();
+        assert!(upgrade_to_tls("imap", client, 143).await.is_ok());
+
+        let (client, mut server) = tokio::io::duplex(4096);
+        server
+            .write_all(b"+OK ready\r\n+OK Begin TLS negotiation\r\n")
+            .await
+            .unwrap();
+        assert!(upgrade_to_tls("pop3", client, 110).await.is_ok());
     }
 
     // ── implicit TLS pass-through ───────────────────────────────────────────────

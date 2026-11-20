@@ -71,6 +71,42 @@ fn slh_dsa_level(oid: &str) -> Option<u8> {
     }
 }
 
+fn ec_key_info(curve_oid: &str) -> KeyInfo {
+    KeyInfo::Ec {
+        curve: curve_name(curve_oid)
+            .map(str::to_string)
+            .unwrap_or_else(|| curve_oid.to_string()),
+    }
+}
+
+fn key_info_for_oid(oid: &str) -> Option<KeyInfo> {
+    match oid {
+        OID_ED25519 => Some(KeyInfo::Ed25519),
+        OID_ED448 => Some(KeyInfo::Ed448),
+        OID_ML_KEM_512 => Some(KeyInfo::MlKem { level: 512 }),
+        OID_ML_KEM_768 => Some(KeyInfo::MlKem { level: 768 }),
+        OID_ML_KEM_1024 => Some(KeyInfo::MlKem { level: 1024 }),
+        OID_ML_DSA_44 => Some(KeyInfo::MlDsa { level: 44 }),
+        OID_ML_DSA_65 => Some(KeyInfo::MlDsa { level: 65 }),
+        OID_ML_DSA_87 => Some(KeyInfo::MlDsa { level: 87 }),
+        _ => slh_dsa_level(oid).map(|level| KeyInfo::SlhDsa { level }),
+    }
+}
+
+fn algorithm_id_for_oid(oid: &str) -> Option<AlgorithmId> {
+    match oid {
+        OID_ED25519 => Some(AlgorithmId::Ed25519),
+        OID_ED448 => Some(AlgorithmId::Ed448),
+        OID_ML_KEM_512 => Some(AlgorithmId::MlKem512),
+        OID_ML_KEM_768 => Some(AlgorithmId::MlKem768),
+        OID_ML_KEM_1024 => Some(AlgorithmId::MlKem1024),
+        OID_ML_DSA_44 => Some(AlgorithmId::MlDsa44),
+        OID_ML_DSA_65 => Some(AlgorithmId::MlDsa65),
+        OID_ML_DSA_87 => Some(AlgorithmId::MlDsa87),
+        _ => slh_dsa_level(oid).map(|level| AlgorithmId::SlhDsa { level }),
+    }
+}
+
 /// Parse a `KeyInfo` from x509-parser's `SubjectPublicKeyInfo`.
 pub fn parse_key_info(spki: &SubjectPublicKeyInfo) -> KeyInfo {
     let alg_oid = spki.algorithm.algorithm.to_id_string();
@@ -79,29 +115,11 @@ pub fn parse_key_info(spki: &SubjectPublicKeyInfo) -> KeyInfo {
             let bits = spki.parsed().ok().map(|k| k.key_size() as u32).unwrap_or(0);
             KeyInfo::Rsa { bits }
         }
-        OID_EC => {
-            let oid = ec_curve_oid(spki);
-            KeyInfo::Ec {
-                curve: curve_name(&oid)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| oid.clone()),
-            }
-        }
+        OID_EC => ec_key_info(&ec_curve_oid(spki)),
         OID_DSA => KeyInfo::Dsa {
             bits: spki.parsed().ok().map(|k| k.key_size() as u32).unwrap_or(0),
         },
-        OID_ED25519 => KeyInfo::Ed25519,
-        OID_ED448 => KeyInfo::Ed448,
-        OID_ML_KEM_512 => KeyInfo::MlKem { level: 512 },
-        OID_ML_KEM_768 => KeyInfo::MlKem { level: 768 },
-        OID_ML_KEM_1024 => KeyInfo::MlKem { level: 1024 },
-        OID_ML_DSA_44 => KeyInfo::MlDsa { level: 44 },
-        OID_ML_DSA_65 => KeyInfo::MlDsa { level: 65 },
-        OID_ML_DSA_87 => KeyInfo::MlDsa { level: 87 },
-        oid if slh_dsa_level(oid).is_some() => KeyInfo::SlhDsa {
-            level: slh_dsa_level(oid).unwrap_or(1),
-        },
-        _ => KeyInfo::Unknown,
+        oid => key_info_for_oid(oid).unwrap_or(KeyInfo::Unknown),
     }
 }
 
@@ -124,18 +142,7 @@ pub fn parse_algorithm_id(spki: &SubjectPublicKeyInfo) -> Option<AlgorithmId> {
         OID_DSA => Some(AlgorithmId::Dsa {
             min_bits: spki.parsed().ok().map(|k| k.key_size() as u32).unwrap_or(0),
         }),
-        OID_ED25519 => Some(AlgorithmId::Ed25519),
-        OID_ED448 => Some(AlgorithmId::Ed448),
-        OID_ML_KEM_512 => Some(AlgorithmId::MlKem512),
-        OID_ML_KEM_768 => Some(AlgorithmId::MlKem768),
-        OID_ML_KEM_1024 => Some(AlgorithmId::MlKem1024),
-        OID_ML_DSA_44 => Some(AlgorithmId::MlDsa44),
-        OID_ML_DSA_65 => Some(AlgorithmId::MlDsa65),
-        OID_ML_DSA_87 => Some(AlgorithmId::MlDsa87),
-        oid if slh_dsa_level(oid).is_some() => Some(AlgorithmId::SlhDsa {
-            level: slh_dsa_level(oid).unwrap_or(1),
-        }),
-        _ => None,
+        oid => algorithm_id_for_oid(oid),
     }
 }
 
@@ -368,6 +375,108 @@ mod tests {
         audit_chain(&pem_certs(pem), &NistIr8547Table, 2026)
     }
 
+    fn contains_classical_certificate(findings: &[Finding]) -> bool {
+        findings
+            .iter()
+            .any(|f| matches!(f.kind, FindingKind::ClassicalCertificate { .. }))
+    }
+
+    #[test]
+    fn classical_certificate_predicate_sees_both_states() {
+        assert!(!contains_classical_certificate(&[]));
+        let classical = Finding {
+            kind: FindingKind::ClassicalCertificate {
+                position: ChainPosition::Leaf,
+                key: KeyInfo::Rsa { bits: 2048 },
+                deadline: 2030,
+            },
+            severity: Severity::Warning,
+        };
+        assert!(contains_classical_certificate(&[classical]));
+        let other = Finding {
+            kind: FindingKind::DowngradeAccepted,
+            severity: Severity::Error,
+        };
+        assert!(!contains_classical_certificate(&[other]));
+    }
+
+    #[test]
+    fn pqc_and_eddsa_oids_map_to_key_info_and_algorithm_id() {
+        let cases = [
+            (OID_ED25519, KeyInfo::Ed25519, AlgorithmId::Ed25519),
+            (OID_ED448, KeyInfo::Ed448, AlgorithmId::Ed448),
+            (
+                OID_ML_KEM_512,
+                KeyInfo::MlKem { level: 512 },
+                AlgorithmId::MlKem512,
+            ),
+            (
+                OID_ML_KEM_768,
+                KeyInfo::MlKem { level: 768 },
+                AlgorithmId::MlKem768,
+            ),
+            (
+                OID_ML_KEM_1024,
+                KeyInfo::MlKem { level: 1024 },
+                AlgorithmId::MlKem1024,
+            ),
+            (
+                OID_ML_DSA_44,
+                KeyInfo::MlDsa { level: 44 },
+                AlgorithmId::MlDsa44,
+            ),
+            (
+                OID_ML_DSA_65,
+                KeyInfo::MlDsa { level: 65 },
+                AlgorithmId::MlDsa65,
+            ),
+            (
+                OID_ML_DSA_87,
+                KeyInfo::MlDsa { level: 87 },
+                AlgorithmId::MlDsa87,
+            ),
+            (
+                "2.16.840.1.101.3.4.3.20",
+                KeyInfo::SlhDsa { level: 1 },
+                AlgorithmId::SlhDsa { level: 1 },
+            ),
+        ];
+        for (oid, key, algorithm) in cases {
+            assert_eq!(key_info_for_oid(oid), Some(key));
+            assert_eq!(algorithm_id_for_oid(oid), Some(algorithm));
+        }
+        assert_eq!(key_info_for_oid("1.2.3.4"), None);
+        assert_eq!(algorithm_id_for_oid("1.2.3.4"), None);
+    }
+
+    #[test]
+    fn unknown_ec_curve_preserves_oid() {
+        assert_eq!(
+            ec_key_info("1.2.3.4"),
+            KeyInfo::Ec {
+                curve: "1.2.3.4".into()
+            }
+        );
+        assert_eq!(
+            ec_key_info("1.2.840.10045.3.1.7"),
+            KeyInfo::Ec {
+                curve: "P-256".into()
+            }
+        );
+    }
+
+    #[test]
+    fn signature_algorithm_names_cover_dsa_sha384_and_sha512() {
+        assert_eq!(
+            signature_algorithm_name("2.16.840.1.101.3.4.3.3"),
+            "dsa-with-SHA384"
+        );
+        assert_eq!(
+            signature_algorithm_name("2.16.840.1.101.3.4.3.4"),
+            "dsa-with-SHA512"
+        );
+    }
+
     #[test]
     fn empty_chain_returns_empty_report() {
         let report = audit_chain(&[], &NistIr8547Table, 2026);
@@ -452,10 +561,7 @@ mod tests {
         assert_eq!(entry.algorithm, AlgorithmId::MlDsa65);
         assert_eq!(entry.signature_algorithm, "ML-DSA-65");
         assert!(entry.key.is_pqc());
-        assert!(!report
-            .findings
-            .iter()
-            .any(|f| matches!(f.kind, FindingKind::ClassicalCertificate { .. })));
+        assert!(!contains_classical_certificate(&report.findings));
         assert_eq!(cert_chain_points(&report), 15);
     }
 
@@ -691,10 +797,7 @@ mod tests {
             &FipsTable,
             2026,
         );
-        assert!(!report
-            .findings
-            .iter()
-            .any(|f| matches!(f.kind, FindingKind::ClassicalCertificate { .. })));
+        assert!(!contains_classical_certificate(&report.findings));
     }
 
     #[test]
