@@ -32,7 +32,7 @@ owo-colors = "4.3.0"
 indicatif = "0.18.4"
 futures = "0.3"
 webpki-roots = "1.0"
-rmcp = { version = "1.2.0", features = ["transport-io"], optional = true }
+rmcp = { version = "3.11.0", features = ["transport-io"], optional = true }
 schemars = { version = "1.0", optional = true }
 thiserror = "1"
 chrono = { version = "0.4", features = ["serde"] }

@@ -3,7 +3,7 @@ use rmcp::{
         tool::ToolRouter,
         wrapper::{Json, Parameters},
     },
-    model::{Implementation, ServerInfo},
+    model::{Implementation, ServerConfig},
     tool, tool_handler, tool_router, ServerHandler,
 };
 use schemars::JsonSchema;
@@ -134,8 +134,8 @@ impl PqauditMcpServer {
 
 #[tool_handler]
 impl ServerHandler for PqauditMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::default()
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::default()
             .with_server_info(Implementation::new("pqaudit", env!("CARGO_PKG_VERSION")))
     }
 }
