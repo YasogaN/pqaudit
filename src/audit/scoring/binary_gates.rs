@@ -178,12 +178,10 @@ mod tests {
         let model = FipsBinaryGatesModel;
         let table = FipsTable;
         let mut probe = pqc_probe_result(0x11EC);
-        if let Ok(ref mut hs) = probe.pqc_handshake {
-            hs.negotiated_suite = CipherSuite {
-                id: 0x1303,
-                name: "TLS_CHACHA20_POLY1305_SHA256".into(),
-            };
-        }
+        probe.pqc_handshake.as_mut().unwrap().negotiated_suite = CipherSuite {
+            id: 0x1303,
+            name: "TLS_CHACHA20_POLY1305_SHA256".into(),
+        };
         let result = model.score(&probe, None, &table);
         assert_eq!(result.cipher_suite.points, 0);
     }

@@ -29,7 +29,8 @@ pub fn render_human(report: &ScanReport, compare_mode: bool) -> String {
 
     if compare_mode {
         if let Some(cmp) = &report.comparison {
-            out.push_str(&render_comparison(cmp));
+            let comparison = render_comparison(cmp);
+            out.push_str(&comparison);
         }
     }
 
@@ -267,6 +268,19 @@ mod tests {
             out.contains("total"),
             "expected 'total' category in comparison"
         );
+    }
+
+    #[test]
+    fn compare_mode_without_comparison_does_not_panic() {
+        let report = ScanReport {
+            schema_version: "1.0".into(),
+            scanned_at: "2026-01-01T00:00:00Z".into(),
+            compliance_mode: ComplianceMode::Nist,
+            targets: vec![stub_target_report(80)],
+            comparison: None,
+        };
+        let out = render_human(&report, true);
+        assert!(!out.contains("Comparison"));
     }
 
     #[test]

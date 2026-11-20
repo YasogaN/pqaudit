@@ -197,12 +197,10 @@ mod tests {
         let table = Cnsa2Table;
         // Use a probe where the cipher suite is AES-128-GCM
         let mut probe = pqc_probe_result(0x0202, false);
-        if let Ok(ref mut hs) = probe.pqc_handshake {
-            hs.negotiated_suite = CipherSuite {
-                id: 0x1301,
-                name: "TLS_AES_128_GCM_SHA256".into(),
-            };
-        }
+        probe.pqc_handshake.as_mut().unwrap().negotiated_suite = CipherSuite {
+            id: 0x1301,
+            name: "TLS_AES_128_GCM_SHA256".into(),
+        };
         let result = model.score(&probe, None, &table);
         assert_eq!(result.cipher_suite.points, 0);
     }

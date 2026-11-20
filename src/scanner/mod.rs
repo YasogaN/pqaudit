@@ -542,9 +542,7 @@ mod tests {
                 negotiated_version: TlsVersion::Tls12,
             },
         );
-        if let Ok(pqc) = &mut probe.pqc_handshake {
-            pqc.negotiated_version = TlsVersion::Tls12;
-        }
+        probe.pqc_handshake.as_mut().unwrap().negotiated_version = TlsVersion::Tls12;
         let (_table, model) = compliance_pair(ComplianceMode::Nist);
         let empty_chain = crate::audit::cert_chain::CertChainReport {
             entries: vec![],
@@ -960,9 +958,7 @@ mod integration_tests {
             None,
             DowngradeResult::Rejected,
         );
-        if let Ok(hs) = &mut probe.pqc_handshake {
-            hs.negotiated_version = TlsVersion::Tls12;
-        }
+        probe.pqc_handshake.as_mut().unwrap().negotiated_version = TlsVersion::Tls12;
         let kinds: Vec<FindingKind> = generate_findings(&probe, &chain, model.as_ref())
             .into_iter()
             .map(|f| f.kind)
