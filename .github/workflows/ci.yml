@@ -77,6 +77,16 @@ jobs:
       - run: cargo clippy -- -D warnings
       - run: cargo clippy --features mcp -- -D warnings
 
+  package:
+    name: Verify crates.io packaging
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo publish --dry-run --locked
+
   static-binary:
     needs: changes
     if: needs.changes.outputs.code == 'true'
