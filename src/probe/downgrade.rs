@@ -20,6 +20,7 @@ pub fn classify_downgrade(response: &ServerResponse) -> DowngradeResult {
         ServerResponse::HandshakeFailure | ServerResponse::ConnectionClose => {
             DowngradeResult::Rejected
         }
+        ServerResponse::Error(reason) => DowngradeResult::Error(reason.clone()),
     }
 }
 
@@ -36,7 +37,7 @@ pub async fn probe_downgrade(
     let mut stream = match crate::probe::connect(host, port, scheme, timeout_ms).await {
         Ok(s) => s,
         Err(crate::ProbeError::Timeout { .. }) => return DowngradeResult::Timeout,
-        Err(_) => return DowngradeResult::Rejected,
+        Err(e) => return DowngradeResult::Error(format!("connection failed: {e}")),
     };
     classify_downgrade(&send_and_receive(&mut stream, &hello, timeout_ms).await)
 }
@@ -79,6 +80,26 @@ mod tests {
         assert_eq!(
             classify_downgrade(&ServerResponse::Timeout),
             DowngradeResult::Timeout
+        );
+    }
+
+    #[test]
+    fn probe_error_is_not_a_rejection() {
+        assert_eq!(
+            classify_downgrade(&ServerResponse::Error("parse failed".into())),
+            DowngradeResult::Error("parse failed".into())
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn probe_downgrade_reports_parse_failure() {
+        use crate::test_support::fixed_response_server;
+
+        let server = fixed_response_server(vec![0x17, 0x03, 0x03, 0x00, 0x00]).await;
+        let result = probe_downgrade("127.0.0.1", server.port(), "localhost", "", 2000).await;
+        assert!(
+            matches!(result, DowngradeResult::Error(_)),
+            "got {result:?}"
         );
     }
 
@@ -137,7 +158,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn probe_downgrade_times_out_and_rejects_connection_errors() {
+    async fn probe_downgrade_times_out_and_reports_connection_errors() {
         use crate::test_support::silent_server;
 
         let silent = silent_server().await;
@@ -149,16 +170,16 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
-        assert_eq!(
+        assert!(matches!(
             probe_downgrade("127.0.0.1", port, "localhost", "", 50).await,
-            DowngradeResult::Rejected
-        );
+            DowngradeResult::Error(_)
+        ));
 
         // RFC 5737 TEST-NET-1: connection cannot complete, so this maps to
-        // Timeout on Linux and to Rejected on platforms that fail fast.
+        // Timeout on Linux and to Error on platforms that fail fast.
         assert!(matches!(
             probe_downgrade("192.0.2.1", 443, "localhost", "", 10).await,
-            DowngradeResult::Timeout | DowngradeResult::Rejected
+            DowngradeResult::Timeout | DowngradeResult::Error(_)
         ));
     }
 

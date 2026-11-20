@@ -11,6 +11,10 @@ pub enum ServerResponse {
     HandshakeFailure,
     ConnectionClose,
     Timeout,
+    /// The probe could not obtain a usable TLS response (transport, write,
+    /// read, or parse failure). This is not a statement about the server's
+    /// TLS version support.
+    Error(String),
 }
 
 /// Parse a TLS ServerHello or Alert from raw bytes.
@@ -297,6 +301,8 @@ pub fn build_client_hello_legacy(
 pub enum ReadError {
     Timeout,
     ConnectionClose,
+    Io,
+    WriteError,
 }
 
 /// Read one complete TLS record from `stream`.
@@ -324,7 +330,7 @@ where
         match tokio::time::timeout(remaining, stream.read(&mut chunk)).await {
             Ok(Ok(0)) => return Err(ReadError::ConnectionClose),
             Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
-            Ok(Err(_)) => return Err(ReadError::ConnectionClose),
+            Ok(Err(_)) => return Err(ReadError::Io),
             Err(_) => return Err(ReadError::Timeout),
         }
     }
@@ -340,7 +346,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     if stream.write_all(hello).await.is_err() {
-        return Err(ReadError::ConnectionClose);
+        return Err(ReadError::WriteError);
     }
     read_tls_record(stream, timeout_ms).await
 }
@@ -351,9 +357,11 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     match send_and_read_raw(stream, hello, timeout_ms).await {
-        Ok(buf) => parse_server_response(&buf).unwrap_or(ServerResponse::ConnectionClose),
+        Ok(buf) => parse_server_response(&buf).unwrap_or_else(ServerResponse::Error),
         Err(ReadError::Timeout) => ServerResponse::Timeout,
         Err(ReadError::ConnectionClose) => ServerResponse::ConnectionClose,
+        Err(ReadError::Io) => ServerResponse::Error("I/O error while reading TLS response".into()),
+        Err(ReadError::WriteError) => ServerResponse::Error("failed to write ClientHello".into()),
     }
 }
 
@@ -639,7 +647,24 @@ mod tests {
         let mut client = client;
         assert!(matches!(
             send_and_receive(&mut client, b"hello", 100).await,
-            ServerResponse::ConnectionClose
+            ServerResponse::Error(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn send_and_receive_reports_parse_failure() {
+        let (mut client, mut server) = tokio::io::duplex(4096);
+        tokio::spawn(async move {
+            let mut buf = [0u8; 256];
+            let _ = server.read(&mut buf).await;
+            server
+                .write_all(&[0x17, 0x03, 0x03, 0x00, 0x00])
+                .await
+                .unwrap();
+        });
+        assert!(matches!(
+            send_and_receive(&mut client, b"hello", 1000).await,
+            ServerResponse::Error(_)
         ));
     }
 
@@ -741,10 +766,7 @@ mod tests {
     #[tokio::test]
     async fn read_tls_record_reports_read_errors() {
         let mut reader = FailingReader;
-        assert_eq!(
-            read_tls_record(&mut reader, 100).await,
-            Err(ReadError::ConnectionClose)
-        );
+        assert_eq!(read_tls_record(&mut reader, 100).await, Err(ReadError::Io));
     }
 
     #[tokio::test]
@@ -753,7 +775,7 @@ mod tests {
         drop(server);
         assert_eq!(
             send_and_read_raw(&mut client, b"hello", 100).await,
-            Err(ReadError::ConnectionClose)
+            Err(ReadError::WriteError)
         );
     }
 }

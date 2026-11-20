@@ -51,3 +51,26 @@ pub trait ScoringModel: Send + Sync {
     ) -> ScoringResult;
     fn severity(&self, finding: &FindingKind) -> Severity;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_rejection_earns_downgrade_points() {
+        assert_eq!(downgrade_points(&DowngradeResult::Rejected, false, &[]), 5);
+    }
+
+    #[test]
+    fn probe_error_earns_no_downgrade_points() {
+        assert_eq!(
+            downgrade_points(&DowngradeResult::Error("probe failed".into()), false, &[]),
+            0
+        );
+    }
+
+    #[test]
+    fn timeout_earns_no_downgrade_points() {
+        assert_eq!(downgrade_points(&DowngradeResult::Timeout, false, &[]), 0);
+    }
+}

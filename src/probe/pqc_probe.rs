@@ -344,6 +344,16 @@ async fn probe_raw_group(
                 reason: "connection closed before ServerHello".into(),
             })
         }
+        Err(ReadError::Io) => {
+            return Err(ProbeError::TlsHandshakeFailed {
+                reason: "I/O error while reading ServerHello".into(),
+            })
+        }
+        Err(ReadError::WriteError) => {
+            return Err(ProbeError::TlsHandshakeFailed {
+                reason: "failed to write ClientHello".into(),
+            })
+        }
     };
 
     let response =
@@ -361,6 +371,7 @@ async fn probe_raw_group(
         ServerResponse::HandshakeFailure => Err(ProbeError::TlsHandshakeFailed {
             reason: "server rejected all offered cipher suites".into(),
         }),
+        ServerResponse::Error(reason) => Err(ProbeError::TlsHandshakeFailed { reason }),
         _ => Err(ProbeError::TlsHandshakeFailed {
             reason: "server closed connection during handshake".into(),
         }),
