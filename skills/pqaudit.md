@@ -54,8 +54,10 @@ pqaudit --ca-file internal-ca.pem internal.example.com  # Private CA
 |-------|---------|
 | 80–100 | PQC-ready or nearly ready |
 | 60–79 | Hybrid PQC negotiated, but fallback or chain gaps remain |
-| 40–59 | Classical TLS 1.3, no PQC |
-| < 40  | Significant risk or no working TLS |
+| 40–59 | Classical TLS 1.3 negotiated; PQC may be available but was not selected |
+| < 40  | Classical-only or no working TLS; significant risk |
+
+`PQA016` means the server supports PQC but selected a classical group for the default offer. `PQA001` means no PQC group was negotiated even when only PQC groups were offered.
 
 ## MCP server mode
 

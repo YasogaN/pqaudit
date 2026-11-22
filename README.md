@@ -27,6 +27,7 @@ The probe completes a real rustls/aws-lc-rs handshake, reads the negotiated grou
 ### Probing
 
 - **Real PQC handshake** — completes a rustls/aws-lc-rs handshake with the provider's post-quantum preference (`X25519MLKEM768`) and reads the negotiated key-exchange group directly from the completed session.
+- **PQC capability check** — separately attempts a TLS 1.3 handshake using only PQC groups. A server that supports PQC but selects a classical group for the default offer is reported as `PQA016`, not as classical-only.
 - **Classical fallback check** — separately attempts a TLS 1.3 handshake using only classical groups, so “PQC available” is distinguished from “PQC enforced”.
 - **Cipher suite enumeration** — exhaustively probes TLS 1.3 and TLS 1.2 cipher suites via raw ClientHellos (`--full-scan`).
 - **Downgrade detection** — probes with a classical-only TLS 1.2 ClientHello to detect whether the server accepts a downgrade.
@@ -47,7 +48,7 @@ The probe completes a real rustls/aws-lc-rs handshake, reads the negotiated grou
 - **0-100 score** — weighted rubric across five categories: key exchange (50 pts), TLS version (15), cipher suite (15), certificate chain (15), downgrade/PQC-enforcement posture (5).
 - **HNDL risk** — rates harvest-now-decrypt-later exposure as NONE / LOW / MEDIUM / HIGH / CRITICAL based on algorithm longevity.
 - **Compliance modes** — `nist` (NIST IR 8547 draft), `cnsa2` (NSA CNSA 2.0), `fips` (FIPS 140-3 algorithm approvals).
-- **Stable rule IDs** — findings map to SARIF rules `PQA001`–`PQA015`, including classical fallback, legacy TLS, certificate validation, weak signatures, and expiry.
+- **Stable rule IDs** — findings map to SARIF rules `PQA001`–`PQA016`, including classical fallback, PQC capability, legacy TLS, certificate validation, weak signatures, and expiry.
 
 > pqaudit tests what the **server** supports. Whether the calling client (browser, Go TLS library, etc.) actually negotiates PQC is outside scope — check your client library's version and cipher group configuration separately.
 
@@ -237,6 +238,7 @@ pqaudit --insecure staging.example.com:443
 The normal probe already reports:
 
 - whether a PQC group was negotiated and whether it required an HRR,
+- whether the server supports PQC under a PQC-only offer even when the default offer negotiated classical (`PQA016`),
 - whether the server still accepts a classical-only TLS 1.3 key exchange (`PQA013`),
 - whether TLS 1.2 downgrades are accepted (`PQA007`),
 - whether TLS 1.0/1.1 are still accepted (`PQA014`),
@@ -263,8 +265,8 @@ for setup and tool schemas.
 | 90 – 100 | A     | Full PQC readiness; meets all current deadlines   |
 | 80 – 89  | B     | PQC negotiation active; minor gaps remain         |
 | 60 – 79  | C     | Hybrid capable but classical fallback accepted    |
-| 40 – 59  | D     | Minimal PQC support; significant exposure         |
-| 0 – 39   | F     | Classical-only; critical HNDL risk                |
+| 40 – 59  | D     | Classical TLS 1.3 negotiated; PQC may be available but was not selected |
+| 0 – 39   | F     | Classical-only or no working TLS; critical HNDL risk |
 
 See the [Scoring System](https://github.com/YasogaN/pqaudit/wiki/Scoring-System) wiki page for
 the full weighted rubric and HNDL model.
