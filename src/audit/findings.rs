@@ -16,6 +16,12 @@ pub enum FindingKind {
     ClassicalKeyExchangeOnly {
         group: NamedGroup,
     },
+    /// The server supports PQC but selected a classical group for the default
+    /// offer. This is not the same as "classical only".
+    PqcSupportedButClassicalNegotiated {
+        negotiated_group: NamedGroup,
+        pqc_group: NamedGroup,
+    },
     HybridKeyExchangeHrrRequired {
         group: NamedGroup,
     },
@@ -68,9 +74,19 @@ pub struct Finding {
 impl fmt::Display for FindingKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ClassicalKeyExchangeOnly { group } => {
-                write!(f, "Classical key exchange only (group: {})", group.name)
-            }
+            Self::ClassicalKeyExchangeOnly { group } => write!(
+                f,
+                "Negotiated classical key exchange (group: {}); no PQC group was negotiated in a PQC-only probe",
+                group.name
+            ),
+            Self::PqcSupportedButClassicalNegotiated {
+                negotiated_group,
+                pqc_group,
+            } => write!(
+                f,
+                "Server supports PQC ({}) but negotiated classical {} for this offer",
+                pqc_group.name, negotiated_group.name
+            ),
             Self::HybridKeyExchangeHrrRequired { group } => write!(
                 f,
                 "Hybrid PQC key exchange requires HelloRetryRequest (group: {})",
@@ -138,6 +154,7 @@ impl Finding {
     pub fn sarif_rule_id(&self) -> &'static str {
         match &self.kind {
             FindingKind::ClassicalKeyExchangeOnly { .. } => "PQA001",
+            FindingKind::PqcSupportedButClassicalNegotiated { .. } => "PQA016",
             FindingKind::HybridKeyExchangeHrrRequired { .. } => "PQA002",
             FindingKind::DeprecatedPqcDraftCodepoint { .. } => "PQA003",
             FindingKind::WeakSymmetricCipher { .. } => "PQA004",
@@ -232,6 +249,17 @@ mod tests {
                     group: group.clone(),
                 },
                 "PQA001",
+            ),
+            (
+                FindingKind::PqcSupportedButClassicalNegotiated {
+                    negotiated_group: group.clone(),
+                    pqc_group: NamedGroup {
+                        code_point: 0x11EC,
+                        name: "X25519MLKEM768".into(),
+                        is_pqc: true,
+                    },
+                },
+                "PQA016",
             ),
             (
                 FindingKind::HybridKeyExchangeHrrRequired { group },

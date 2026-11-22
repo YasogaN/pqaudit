@@ -113,6 +113,7 @@ impl ScoringModel for FipsBinaryGatesModel {
     fn severity(&self, finding: &FindingKind) -> Severity {
         match finding {
             FindingKind::ClassicalKeyExchangeOnly { .. } => Severity::Error,
+            FindingKind::PqcSupportedButClassicalNegotiated { .. } => Severity::Error,
             FindingKind::HybridKeyExchangeHrrRequired { .. } => Severity::Warning,
             FindingKind::DeprecatedPqcDraftCodepoint { .. } => Severity::Error,
             FindingKind::WeakSymmetricCipher { .. } => Severity::Error,
@@ -246,6 +247,18 @@ mod tests {
                     code_point: 0x001D,
                     name: "x25519".into(),
                     is_pqc: false,
+                },
+            },
+            FindingKind::PqcSupportedButClassicalNegotiated {
+                negotiated_group: crate::NamedGroup {
+                    code_point: 0x001D,
+                    name: "x25519".into(),
+                    is_pqc: false,
+                },
+                pqc_group: crate::NamedGroup {
+                    code_point: 0x11EC,
+                    name: "X25519MLKEM768".into(),
+                    is_pqc: true,
                 },
             },
             FindingKind::HybridKeyExchangeHrrRequired {

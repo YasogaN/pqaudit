@@ -152,6 +152,7 @@ impl ScoringModel for NistWeightedModel {
     fn severity(&self, finding: &FindingKind) -> Severity {
         match finding {
             FindingKind::ClassicalKeyExchangeOnly { .. } => Severity::Error,
+            FindingKind::PqcSupportedButClassicalNegotiated { .. } => Severity::Warning,
             FindingKind::HybridKeyExchangeHrrRequired { .. } => Severity::Warning,
             FindingKind::DeprecatedPqcDraftCodepoint { .. } => Severity::Error,
             FindingKind::WeakSymmetricCipher { .. } => Severity::Warning,

@@ -20,6 +20,18 @@ pub fn remediation_for(kind: &FindingKind) -> Remediation {
             ],
         },
 
+        FindingKind::PqcSupportedButClassicalNegotiated { pqc_group, .. } => Remediation {
+            text: format!(
+                "The server supports {} but selected a classical group for this offer. \
+                 Check the server's group preference/order and prefer {} over classical groups.",
+                pqc_group.name, pqc_group.name
+            ),
+            config_snippets: vec![(
+                "nginx",
+                format!("ssl_ecdh_curve {}:X25519;", pqc_group.name),
+            )],
+        },
+
         FindingKind::HybridKeyExchangeHrrRequired { .. } => Remediation {
             text: "The server requires a HelloRetryRequest (HRR) for the hybrid PQC group. \
                    This causes an extra round trip. Prefer X25519MLKEM768 which is supported \
@@ -189,6 +201,18 @@ mod tests {
                     code_point: 0x001D,
                     name: "x25519".into(),
                     is_pqc: false,
+                },
+            },
+            FindingKind::PqcSupportedButClassicalNegotiated {
+                negotiated_group: NamedGroup {
+                    code_point: 0x001D,
+                    name: "x25519".into(),
+                    is_pqc: false,
+                },
+                pqc_group: NamedGroup {
+                    code_point: 0x11EC,
+                    name: "X25519MLKEM768".into(),
+                    is_pqc: true,
                 },
             },
             FindingKind::HybridKeyExchangeHrrRequired {

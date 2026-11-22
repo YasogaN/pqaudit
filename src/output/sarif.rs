@@ -11,7 +11,7 @@ fn rule_definitions() -> Value {
         {
             "id": "PQA001",
             "name": "ClassicalKeyExchangeOnly",
-            "shortDescription": { "text": "Server uses classical (pre-quantum) key exchange only." },
+            "shortDescription": { "text": "No PQC group was negotiated, including when only PQC groups were offered." },
             "helpUri": "https://csrc.nist.gov/pubs/ir/8547/ipd"
         },
         {
@@ -97,6 +97,12 @@ fn rule_definitions() -> Value {
             "name": "CertificateValidationFailed",
             "shortDescription": { "text": "Certificate chain validation failed; the chain was captured without trust validation." },
             "helpUri": "https://www.rfc-editor.org/rfc/rfc5280"
+        },
+        {
+            "id": "PQA016",
+            "name": "PqcSupportedButClassicalNegotiated",
+            "shortDescription": { "text": "Server supports PQC but selected a classical key exchange group for this offer." },
+            "helpUri": "https://csrc.nist.gov/pubs/ir/8547/ipd"
         }
     ])
 }
@@ -201,7 +207,7 @@ mod tests {
             .collect();
         assert!(rules.contains(&"PQA001"), "PQA001 missing from rules");
         assert!(rules.contains(&"PQA007"), "PQA007 missing from rules");
-        assert_eq!(rules.len(), 15, "expected all 15 PQA rules");
+        assert_eq!(rules.len(), 16, "expected all 16 PQA rules");
     }
 
     #[test]

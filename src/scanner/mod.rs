@@ -313,13 +313,24 @@ fn generate_findings(
                 kind,
             });
         } else if !group.is_pqc {
-            let kind = FindingKind::ClassicalKeyExchangeOnly {
-                group: group.clone(),
-            };
-            findings.push(Finding {
-                severity: model.severity(&kind),
-                kind,
-            });
+            if let Some(pqc_group) = &pqc.pqc_only_group {
+                let kind = FindingKind::PqcSupportedButClassicalNegotiated {
+                    negotiated_group: group.clone(),
+                    pqc_group: pqc_group.clone(),
+                };
+                findings.push(Finding {
+                    severity: model.severity(&kind),
+                    kind,
+                });
+            } else {
+                let kind = FindingKind::ClassicalKeyExchangeOnly {
+                    group: group.clone(),
+                };
+                findings.push(Finding {
+                    severity: model.severity(&kind),
+                    kind,
+                });
+            }
         } else if pqc.hrr_required {
             let kind = FindingKind::HybridKeyExchangeHrrRequired {
                 group: group.clone(),
@@ -342,7 +353,7 @@ fn generate_findings(
         }
 
         // Classical fallback: PQC is available but not enforced. If the
-        // negotiated group is already classical, PQA001 covers it.
+        // negotiated group is classical, PQA001/PQA016 covers it.
         if pqc.classical_fallback && group.is_pqc {
             let kind = FindingKind::ClassicalFallbackAccepted;
             findings.push(Finding {
@@ -477,6 +488,37 @@ mod tests {
                 .iter()
                 .any(|f| matches!(f.kind, FindingKind::ClassicalKeyExchangeOnly { .. })),
             "expected ClassicalKeyExchangeOnly finding"
+        );
+    }
+
+    #[test]
+    fn pqc_supported_but_classical_negotiated_generates_new_finding() {
+        let mut probe = make_probe(false, false, DowngradeResult::Rejected);
+        let pqc = probe.pqc_handshake.as_mut().unwrap();
+        pqc.pqc_supported = true;
+        pqc.pqc_only_group = Some(NamedGroup {
+            code_point: 0x11EC,
+            name: "X25519MLKEM768".into(),
+            is_pqc: true,
+        });
+        let (_table, model) = compliance_pair(ComplianceMode::Nist);
+        let empty_chain = crate::audit::cert_chain::CertChainReport {
+            entries: vec![],
+            findings: vec![],
+        };
+        let findings = generate_findings(&probe, &empty_chain, model.as_ref());
+        assert!(
+            findings.iter().any(|f| matches!(
+                f.kind,
+                FindingKind::PqcSupportedButClassicalNegotiated { .. }
+            )),
+            "expected PqcSupportedButClassicalNegotiated finding"
+        );
+        assert!(
+            !findings
+                .iter()
+                .any(|f| matches!(f.kind, FindingKind::ClassicalKeyExchangeOnly { .. })),
+            "PQC-supported server must not be reported as classical-only"
         );
     }
 
