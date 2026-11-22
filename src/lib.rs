@@ -179,6 +179,12 @@ pub struct PqcHandshakeResult {
     pub negotiated_suite: CipherSuite,
     pub negotiated_group: NamedGroup,
     pub hrr_required: bool,
+    /// True when a TLS 1.3 handshake succeeded using only PQC groups.
+    #[serde(default)]
+    pub pqc_supported: bool,
+    /// Group negotiated by the PQC-only capability probe, when it succeeded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pqc_only_group: Option<NamedGroup>,
     pub cert_chain_der: Vec<Vec<u8>>,
     /// True when the server also completes a TLS 1.3 handshake using only
     /// classical key-exchange groups.

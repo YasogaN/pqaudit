@@ -124,6 +124,8 @@ mod tests {
                 },
                 hrr_required: false,
                 cert_chain_der: vec![],
+                pqc_supported: false,
+                pqc_only_group: None,
                 classical_fallback: false,
                 legacy_protocols: vec![],
                 certificate_validation_error: None,

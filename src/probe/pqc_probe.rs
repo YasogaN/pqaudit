@@ -5,7 +5,7 @@ use crate::probe::handshake::{
     send_and_receive, ReadError, ServerResponse,
 };
 use crate::probe::hrr::is_hrr;
-use crate::{CipherSuite, PqcHandshakeResult, ProbeError, TlsVersion};
+use crate::{CipherSuite, NamedGroup, PqcHandshakeResult, ProbeError, TlsVersion};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::aws_lc_rs;
 use rustls::crypto::CryptoProvider;
@@ -134,6 +134,19 @@ impl ServerCertVerifier for NoCertificateVerification {
 fn full_provider() -> CryptoProvider {
     let mut provider = aws_lc_rs::default_provider();
     provider.kx_groups = aws_lc_rs::ALL_KX_GROUPS.to_vec();
+    provider
+}
+
+/// Provider with only the PQC groups rustls can negotiate. This isolates
+/// "server supports PQC" from "server selected classical for the default offer".
+fn pqc_only_provider() -> CryptoProvider {
+    let mut provider = aws_lc_rs::default_provider();
+    provider.kx_groups = vec![
+        aws_lc_rs::kx_group::X25519MLKEM768,
+        aws_lc_rs::kx_group::SECP256R1MLKEM768,
+        aws_lc_rs::kx_group::MLKEM768,
+        aws_lc_rs::kx_group::MLKEM1024,
+    ];
     provider
 }
 
@@ -284,6 +297,8 @@ fn extract_from_session(
         negotiated_suite,
         negotiated_group: named_group_for_code_point(group_code),
         hrr_required: false,
+        pqc_supported: false,
+        pqc_only_group: None,
         cert_chain_der,
         classical_fallback: false,
         legacy_protocols: vec![],
@@ -383,6 +398,11 @@ fn apply_raw_probe(result: &mut PqcHandshakeResult, raw: Option<(u16, bool)>) {
     }
 }
 
+fn apply_pqc_capability(result: &mut PqcHandshakeResult, pqc_only_group: Option<NamedGroup>) {
+    result.pqc_only_group = pqc_only_group;
+    result.pqc_supported = result.negotiated_group.is_pqc || result.pqc_only_group.is_some();
+}
+
 /// Probe whether the server accepts a TLS 1.3 handshake with only classical
 /// key-exchange groups. This distinguishes "PQC available" from "PQC enforced".
 async fn probe_classical_fallback(host: &str, port: u16, sni: &str, config: &ProbeConfig) -> bool {
@@ -404,6 +424,32 @@ async fn probe_classical_fallback(host: &str, port: u16, sni: &str, config: &Pro
     )
     .await
     .is_ok()
+}
+
+/// Probe whether the server completes a TLS 1.3 handshake when only PQC
+/// groups are offered. Returns the negotiated PQC group on success.
+async fn probe_pqc_only(
+    host: &str,
+    port: u16,
+    sni: &str,
+    config: &ProbeConfig,
+) -> Option<NamedGroup> {
+    let stream = connect_tls(
+        host,
+        port,
+        sni,
+        config,
+        pqc_only_provider(),
+        &[&rustls::version::TLS13],
+        true, // isolate key exchange from certificate trust
+    )
+    .await
+    .ok()?;
+    let result = extract_handshake(stream, None).ok()?;
+    result
+        .negotiated_group
+        .is_pqc
+        .then_some(result.negotiated_group)
 }
 
 async fn probe_legacy_version(
@@ -463,6 +509,13 @@ pub async fn pqc_probe(
         .ok()
         .flatten();
     apply_raw_probe(&mut result, raw);
+
+    let pqc_only_group = if result.negotiated_group.is_pqc {
+        None
+    } else {
+        probe_pqc_only(host, port, sni, config).await
+    };
+    apply_pqc_capability(&mut result, pqc_only_group);
 
     result.classical_fallback = probe_classical_fallback(host, port, sni, config).await;
     result.legacy_protocols = probe_legacy_versions(host, port, sni, config).await;
@@ -535,6 +588,52 @@ mod tests {
         assert!(result.certificate_validation_error.is_none());
         assert!(!result.cert_chain_der.is_empty());
         assert!(!result.negotiated_suite.name.is_empty());
+        assert!(result.pqc_supported);
+        assert!(result.pqc_only_group.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn probe_pqc_only_negotiates_hybrid_group() {
+        let provider = provider_with_groups(vec![aws_lc_rs::kx_group::X25519MLKEM768]);
+        let server = tls_server(provider, &[&rustls::version::TLS13]).await;
+        let group = probe_pqc_only("127.0.0.1", server.port(), "localhost", &config(true)).await;
+        assert_eq!(group.map(|group| group.code_point), Some(0x11EC));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn probe_pqc_only_returns_none_for_classical_only_server() {
+        let server = tls_server(classical_provider(), &[&rustls::version::TLS13]).await;
+        assert!(
+            probe_pqc_only("127.0.0.1", server.port(), "localhost", &config(true))
+                .await
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn apply_pqc_capability_uses_pqc_only_probe() {
+        let mut result = PqcHandshakeResult {
+            negotiated_version: TlsVersion::Tls13,
+            negotiated_suite: CipherSuite {
+                id: 0x1302,
+                name: "TLS_AES_256_GCM_SHA384".into(),
+            },
+            negotiated_group: named_group_for_code_point(0x001D),
+            hrr_required: false,
+            pqc_supported: false,
+            pqc_only_group: None,
+            cert_chain_der: vec![],
+            classical_fallback: true,
+            legacy_protocols: vec![],
+            certificate_validation_error: None,
+        };
+        apply_pqc_capability(&mut result, Some(named_group_for_code_point(0x11EC)));
+        assert!(result.pqc_supported);
+        assert_eq!(result.pqc_only_group.as_ref().unwrap().code_point, 0x11EC);
+
+        apply_pqc_capability(&mut result, None);
+        assert!(!result.pqc_supported);
+        assert!(result.pqc_only_group.is_none());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -883,6 +982,8 @@ mod tests {
             negotiated_group: named_group_for_code_point(0),
             hrr_required: false,
             cert_chain_der: vec![],
+            pqc_supported: false,
+            pqc_only_group: None,
             classical_fallback: false,
             legacy_protocols: vec![],
             certificate_validation_error: None,
